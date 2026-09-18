@@ -396,6 +396,12 @@ BASE_CSS = """
   }
   .practise-card .w { font-size: .95rem; color: var(--ink-soft); }
 
+  /* Streamlit Community Cloud pins a floating badge to the bottom-right of
+     every page. On the parent sheet it sat on top of the last row of
+     practise cards, hiding a sound a parent is meant to practise. Reserve
+     space for it rather than letting content run underneath. */
+  [data-testid="stAppViewContainer"] .block-container { padding-bottom: 5rem; }
+
   @media (max-width: 640px) {
     /* Branding and first-run help do not earn their vertical space on a
        phone, where the point is to get the six sounds onto one screen. */
