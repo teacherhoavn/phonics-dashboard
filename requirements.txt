@@ -1,0 +1,6 @@
+streamlit
+supabase
+pandas
+python-dotenv
+pillow
+qrcode

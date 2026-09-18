@@ -1,0 +1,126 @@
+"""Parent sheet tests.
+
+The sheet is strictly OUTPUT: parents read it, and there is no path by which
+they can write anything back. Parents reply on Zalo, which is the channel
+they already use — an in-app reply would be one more inbox for the teacher
+to check.
+
+These tests hold that line, and cover what the sheet actually shows.
+
+Run:  venv/bin/python test_parent_sheet.py
+"""
+
+import os
+import tempfile
+
+import local_backend
+
+
+def fresh():
+    """A throwaway demo database, so tests never touch the real one."""
+    local_backend.DB_PATH = os.path.join(tempfile.mkdtemp(), "t.db")
+    b = local_backend.SqliteBackend()
+    token = b.conn.execute(
+        "select access_token from students where name like 'An%'"
+    ).fetchone()["access_token"]
+    return b, token
+
+
+def test_sheet_is_read_only_no_write_path_exists():
+    """If a write path ever comes back, it should be a deliberate decision."""
+    b, _ = fresh()
+    for attr in ("submit_parent_response", "recent_parent_responses"):
+        assert not hasattr(b, attr), f"{attr} should not exist on the backend"
+    assert not os.path.exists("test_parent.py"), "old reply tests should be gone"
+
+
+def test_no_parent_writable_tables_remain():
+    b, _ = fresh()
+    tables = {
+        r["name"] for r in b.conn.execute(
+            "select name from sqlite_master where type='table'"
+        )
+    }
+    assert "parent_responses" not in tables
+    assert "parent_response_sounds" not in tables
+
+
+def test_sheet_returns_the_named_student_only():
+    b, token = fresh()
+    sheet = b.get_student_sheet(token)
+    assert sheet["student"]["name"].startswith("An")
+    assert set(sheet) == {"student", "groups", "practise", "timeline", "last_checkin"}
+
+
+def test_bad_token_returns_nothing():
+    b, _ = fresh()
+    assert b.get_student_sheet("not-a-real-token") is None
+
+
+def test_archived_student_link_stops_working():
+    b, token = fresh()
+    sid = b.conn.execute(
+        "select id from students where access_token=?", (token,)
+    ).fetchone()["id"]
+    b.set_student_archived(sid, True)
+    assert b.get_student_sheet(token) is None
+
+
+def test_practise_list_holds_only_unfinished_sounds():
+    b, token = fresh()
+    practise = b.get_student_sheet(token)["practise"]
+    assert practise, "the demo student should have sounds left to practise"
+    assert all(p["status"] != "acquired" for p in practise)
+
+
+def test_practise_list_is_in_teaching_order():
+    b, token = fresh()
+    practise = b.get_student_sheet(token)["practise"]
+    keys = [(p["group_number"], p["grapheme"]) for p in practise]
+    assert keys == sorted(keys, key=lambda k: k[0]) or len(keys) <= 1
+
+
+def test_timeline_is_teacher_activity_newest_first():
+    """This is the 'what the teacher has done' record parents see."""
+    b, token = fresh()
+    timeline = b.get_student_sheet(token)["timeline"]
+    assert timeline, "demo student has tests"
+    dates = [row["tested_on"] for row in timeline]
+    assert dates == sorted(dates, reverse=True)
+    for row in timeline:
+        assert row["secure"] <= row["total"]
+        assert "group_number" in row
+
+
+def test_timeline_reflects_a_new_test():
+    from datetime import date
+
+    b, token = fresh()
+    sid = b.conn.execute(
+        "select id from students where access_token=?", (token,)
+    ).fetchone()["id"]
+    before = len(b.get_student_sheet(token)["timeline"])
+    group = b.list_groups()[5]
+    sounds = b.list_sounds(group_id=group["id"])
+    b.save_test_session(
+        sid, group["id"], date.today(), {s["id"]: "acquired" for s in sounds}
+    )
+    after = b.get_student_sheet(token)["timeline"]
+    assert len(after) == before + 1
+    assert after[0]["secure"] == after[0]["total"] == 6
+
+
+def test_group_summary_covers_all_seven():
+    b, token = fresh()
+    groups = b.get_student_sheet(token)["groups"]
+    assert sorted(g["group_number"] for g in groups) == list(range(1, 8))
+
+
+if __name__ == "__main__":
+    passed = 0
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            fn()
+            passed += 1
+            print(f"  ok  {name}")
+    print(f"\n{passed} passed")
