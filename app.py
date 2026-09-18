@@ -979,3 +979,10 @@ elif db.USE_SUPABASE and try_resume_session():
     render_teacher_app()
 else:
     render_login()
+
+# Streamlit Community Cloud pins a ~46px badge to the bottom-right corner of
+# every page, and it sat on top of the last row of practise cards -- hiding a
+# sound a parent is meant to work on. A spacer is deliberately used instead of
+# padding Streamlit's own container: those class names are internal and change
+# between releases, so a selector here would break silently on an upgrade.
+st.markdown("<div style='height:4rem'></div>", unsafe_allow_html=True)
