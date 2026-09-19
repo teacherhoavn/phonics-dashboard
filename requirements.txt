@@ -1,4 +1,10 @@
-streamlit
+# Streamlit is pinned on purpose. The look of the app (status colours, tap
+# targets, one-row sounds on a phone) is CSS aimed at Streamlit's internal
+# element names, and those change between releases -- an unpinned deploy
+# picked up 1.64, which renamed the segmented-control buttons and silently
+# dropped all of that styling on the teacher screens. Upgrade deliberately,
+# and re-check the Phonics test screen on a phone when you do.
+streamlit==1.50.0
 supabase
 pandas
 python-dotenv
