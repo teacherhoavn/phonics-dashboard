@@ -341,11 +341,15 @@ def render_phonics_test(backend):
             unsafe_allow_html=True,
         )
         with c2:
-            # Streamlit ignores `default` once a key exists in session_state,
-            # which is exactly what keeps taps sticky across the reruns that
-            # every other tap on this page triggers.
+            # Seed the last test's result into session state once, instead of
+            # passing `default=`. "Mark all" also writes these keys, and a
+            # widget given both a default and a session-state value makes
+            # Streamlit print a warning under every sound. Seeding once keeps
+            # taps sticky across reruns and gives each widget one source.
+            if key not in st.session_state:
+                st.session_state[key] = default
             st.segmented_control(
-                snd["label"], STATUS_LABELS, default=default,
+                snd["label"], STATUS_LABELS,
                 key=key, label_visibility="collapsed",
             )
 
