@@ -49,11 +49,57 @@ def test_default_theme_status_pills_meet_aa():
         assert ratio >= AA_NORMAL, f"status {code} is {ratio:.2f}:1"
 
 
-def test_default_theme_group_colours_work_both_ways():
-    """Each group colour is used as a fill AND as text, so both must pass."""
-    for i, color in enumerate(THEMES[DEFAULT_THEME]["group_colors"], 1):
+def test_vivid_group_colours_work_both_ways():
+    """Each vivid group colour is used as a fill AND as text, so both must pass."""
+    for i, color in enumerate(THEMES["vivid"]["group_colors"], 1):
         assert contrast_ratio(WHITE, color) >= AA_NORMAL, f"white on group {i}"
         assert contrast_ratio(color, "#ffffff") >= AA_NORMAL, f"group {i} on white"
+
+
+def test_melon_is_the_default():
+    assert DEFAULT_THEME == "melon"
+
+
+def test_melon_group_palette_is_readable():
+    """Pastel fills with dark ink: ink must be AAA on its own fill, AA on
+    white (the "started" state), and each edge visible against white."""
+    palette = THEMES["melon"]["group_palette"]
+    assert len(palette) == 7
+    for i, g in enumerate(palette, 1):
+        assert contrast_ratio(g["ink"], g["fill"]) >= AAA_NORMAL, f"group {i} ink on fill"
+        assert contrast_ratio(g["ink"], "#ffffff") >= AA_NORMAL, f"group {i} ink on white"
+        assert contrast_ratio(g["edge"], "#ffffff") >= AA_LARGE, f"group {i} edge"
+
+
+def test_melon_never_puts_white_text_on_a_pastel():
+    """The failure this theme is built to avoid: white on pastel is ~1.4:1."""
+    t = THEMES["melon"]
+    for s in t["status"].values():
+        assert s["fg"].lower() != "#ffffff"
+    assert t["accent_ink"].lower() != "#ffffff"
+    # and prove why: white on the mint fill would be unreadable
+    assert contrast_ratio("#ffffff", t["status"]["acquired"]["bg"]) < AA_LARGE
+
+
+def test_melon_status_pills_meet_aaa_and_edges_show():
+    for code, s in THEMES["melon"]["status"].items():
+        assert contrast_ratio(s["fg"], s["bg"]) >= AAA_NORMAL, f"{code} pill"
+        # bulk "mark all" buttons use text + edge on white
+        assert contrast_ratio(s["text"], "#ffffff") >= AA_NORMAL, f"{code} text"
+        assert contrast_ratio(s["edge"], "#ffffff") >= AA_LARGE, f"{code} edge"
+
+
+def test_melon_selected_group_button_is_readable():
+    t = THEMES["melon"]
+    assert contrast_ratio(t["accent_ink"], t["accent_fill"]) >= AAA_NORMAL
+    assert contrast_ratio(t["accent_edge"], "#ffffff") >= AA_LARGE
+
+
+def test_vivid_is_preserved_so_switching_back_is_faithful():
+    t = THEMES["vivid"]
+    assert t["group_colors"][0] == "#b01254"
+    assert t["status"]["acquired"]["bg"] == "#136b2f"
+    assert "group_palette" not in t
 
 
 def test_default_theme_hero_text_meets_aa_across_the_gradient():
@@ -112,6 +158,13 @@ def test_group_card_style_per_theme():
     # Every group gets a different colour, or they are not telling groups apart.
     fills = {group_card_style(n, "done", "vivid")[0] for n in range(1, 8)}
     assert len(fills) == 7
+    # melon: pastel fill + dark ink when done, white + group edge when started.
+    mdone = group_card_style(1, "done", "melon")
+    mstart = group_card_style(1, "started", "melon")
+    assert mdone[0] == THEMES["melon"]["group_palette"][0]["fill"]
+    assert mdone[1] != WHITE
+    assert mstart[0] == WHITE and mstart[2] == THEMES["melon"]["group_palette"][0]["edge"]
+    assert len({group_card_style(n, "done", "melon")[0] for n in range(1, 8)}) == 7
     # classic ignores the group number and colours by state only.
     assert group_card_style(1, "done", "classic") == group_card_style(7, "done", "classic")
 

@@ -55,6 +55,70 @@ WHITE = "#ffffff"
 # --- Themes ----------------------------------------------------------------
 
 THEMES = {
+    "melon": {
+        "label": "Melon (light pastel)",
+        # Pastel FILLS with deep same-hue INK. White text on any of these
+        # pastels is ~1.3-1.6:1 and unreadable, so the light, modern feel
+        # comes from the fills while every word stays dark.
+        "ink": "#172033",          # body text on white -- 16.6:1
+        "ink_soft": "#465063",     # secondary text    -- 8.3:1
+        "muted": "#5b6576",        # least important   -- 5.9:1
+        "page_bg": "#ffffff",
+        "panel_bg": "#f5f8fc",
+        "border": "#8b95a4",       # inputs and controls, kept at 3:1
+        "focus": "#2f6fc0",
+        # The header gradient is kept from vivid on purpose -- it was the
+        # part of the old look worth keeping.
+        "hero_from": "#5b21a8",
+        "hero_to": "#0f5fa8",
+        "accent": "#1e56b8",       # accent used as text, 6.8:1
+        "accent_fill": "#a9d1fa",
+        "accent_ink": "#0a3162",
+        "accent_edge": "#2f6fc0",
+        # Each status: pastel fill, deep ink on it, a mid-tone edge that is
+        # visible against white (3:1) for outlines, and a shape.
+        "status": {
+            "acquired":   {"bg": "#9fe6bf", "fg": "#0b4a2e", "edge": "#2f8f5b",
+                           "text": "#0b4a2e", "symbol": "✓"},
+            "practising": {"bg": "#fbe49a", "fg": "#5a4000", "edge": "#a87c00",
+                           "text": "#5a4000", "symbol": "~"},
+            "not_yet":    {"bg": "#f8b8b8", "fg": "#661118", "edge": "#c8434d",
+                           "text": "#661118", "symbol": "✗"},
+        },
+        "chip_bg": "#ffffff",
+        "chip_fg": "#172033",
+        "chip_border": "#8b95a4",
+        "group_colors": None,
+        # Seven groups run as a spectrum -- pink, peach, butter, lime, mint,
+        # blue, lilac -- so the strip reads as a sequence rather than as
+        # seven unrelated colours, and no single group reads as a status.
+        "group_palette": [
+            {"fill": "#f8b8b8", "ink": "#661118", "edge": "#c8434d"},
+            {"fill": "#fcca9f", "ink": "#582801", "edge": "#c0621a"},
+            {"fill": "#fbe49a", "ink": "#5a4000", "edge": "#a87c00"},
+            {"fill": "#c9ec9f", "ink": "#2c4d0c", "edge": "#5f8a2a"},
+            {"fill": "#9fe6bf", "ink": "#0b4a2e", "edge": "#2f8f5b"},
+            {"fill": "#a9d1fa", "ink": "#0a3162", "edge": "#2f6fc0"},
+            {"fill": "#cdbff7", "ink": "#37277a", "edge": "#6a55c8"},
+        ],
+        "group_untested_bg": "#eef1f6",
+        "group_untested_fg": "#465063",
+        "radius": "16px",
+        # Card outlines are decorative here -- the content inside carries the
+        # meaning -- so they can be a soft hairline instead of a heavy rule.
+        "card_border": "#d3dae4",
+        "card_border_w": "1.5px",
+        "type": {
+            "base": "1.05rem",
+            "grapheme": "2.6rem",
+            "grapheme_sm": "2.2rem",
+            "meta": "0.95rem",
+            "button": "1rem",
+            "hero": "1.6rem",
+            "hero_sm": "1.3rem",
+            "tap_min": "52px",
+        },
+    },
     "vivid": {
         "label": "Vivid (high contrast)",
         "ink": "#14181f",          # body text on white -- 15.9:1
@@ -133,7 +197,7 @@ THEMES = {
     },
 }
 
-DEFAULT_THEME = "vivid"
+DEFAULT_THEME = "melon"
 
 
 def resolve(name: str | None) -> str:
@@ -143,6 +207,10 @@ def resolve(name: str | None) -> str:
 def _root_vars(t: dict) -> str:
     ty = t["type"]
     s = t["status"]
+    # Optional tokens fall back to what the older themes already did, so
+    # adding melon changed nothing about how vivid or classic render.
+    edge = {k: v.get("edge", v["bg"]) for k, v in s.items()}
+    text = {k: v.get("text", v["bg"]) for k, v in s.items()}
     return f"""
   :root {{
     --ink: {t['ink']};
@@ -160,6 +228,18 @@ def _root_vars(t: dict) -> str:
     --near-fg: {s['practising']['fg']};
     --not-bg: {s['not_yet']['bg']};
     --not-fg: {s['not_yet']['fg']};
+    --got-edge: {edge['acquired']};
+    --near-edge: {edge['practising']};
+    --not-edge: {edge['not_yet']};
+    --got-text: {text['acquired']};
+    --near-text: {text['practising']};
+    --not-text: {text['not_yet']};
+    --accent-fill: {t.get('accent_fill', t['accent'])};
+    --accent-ink: {t.get('accent_ink', '#ffffff')};
+    --accent-edge: {t.get('accent_edge', t['accent'])};
+    --radius: {t.get('radius', '10px')};
+    --card-border: {t.get('card_border', t['border'])};
+    --card-border-w: {t.get('card_border_w', '3px')};
     --chip-bg: {t['chip_bg']};
     --chip-fg: {t['chip_fg']};
     --chip-border: {t['chip_border']};
@@ -188,9 +268,10 @@ def status_badge(code: str, label: str, theme: str | None = None) -> str:
     """
     s = status_style(code, theme)
     sym = f"{s['symbol']} " if s["symbol"] else ""
+    edge = s.get("edge", s["bg"])
     return (
-        f"<span class='badge' style='background:{s['bg']};color:{s['fg']}'>"
-        f"{sym}{label}</span>"
+        f"<span class='badge' style='background:{s['bg']};color:{s['fg']};"
+        f"border:1.5px solid {edge}'>{sym}{label}</span>"
     )
 
 
@@ -204,6 +285,15 @@ def group_card_style(group_number: int, state: str, theme: str | None = None) ->
     green/amber/grey by state.
     """
     t = THEMES[resolve(theme)]
+    if t.get("group_palette"):
+        if state == "untested":
+            return t["group_untested_bg"], t["group_untested_fg"], "transparent"
+        g = t["group_palette"][(group_number - 1) % len(t["group_palette"])]
+        if state == "done":
+            return g["fill"], g["ink"], g["edge"]
+        # Started: white with the group's edge, so a part-finished group
+        # never reads as a finished one.
+        return WHITE, g["ink"], g["edge"]
     if t["group_colors"]:
         if state == "untested":
             return t["group_untested_bg"], t["group_untested_fg"], "transparent"
@@ -255,15 +345,15 @@ BASE_CSS = """
      read as "set everything to this" rather than as a second row of the
      per-sound buttons. */
   [class*="st-key-bulk_acquired"] button {
-    border: 3px solid var(--got-bg) !important; color: var(--got-bg) !important;
+    border: 3px solid var(--got-edge) !important; color: var(--got-text) !important;
     font-weight: 700;
   }
   [class*="st-key-bulk_practising"] button {
-    border: 3px solid var(--near-bg) !important; color: var(--near-bg) !important;
+    border: 3px solid var(--near-edge) !important; color: var(--near-text) !important;
     font-weight: 700;
   }
   [class*="st-key-bulk_not_yet"] button {
-    border: 3px solid var(--not-bg) !important; color: var(--not-bg) !important;
+    border: 3px solid var(--not-edge) !important; color: var(--not-text) !important;
     font-weight: 700;
   }
 
@@ -296,15 +386,19 @@ BASE_CSS = """
   /* Each status keeps its own colour when selected. */
   [class*="st-key-snd_"] [data-testid="stButtonGroup"] button:nth-child(1)[data-testid$="Active"] {
     background: var(--got-bg) !important; color: var(--got-fg) !important;
+    border: 2px solid var(--got-edge) !important;
   }
   [class*="st-key-snd_"] [data-testid="stButtonGroup"] button:nth-child(2)[data-testid$="Active"] {
     background: var(--near-bg) !important; color: var(--near-fg) !important;
+    border: 2px solid var(--near-edge) !important;
   }
   [class*="st-key-snd_"] [data-testid="stButtonGroup"] button:nth-child(3)[data-testid$="Active"] {
     background: var(--not-bg) !important; color: var(--not-fg) !important;
+    border: 2px solid var(--not-edge) !important;
   }
   [class*="st-key-grp_"] [data-testid="stButtonGroup"] button[data-testid$="Active"] {
-    background: var(--accent) !important; color: #fff !important;
+    background: var(--accent-fill) !important; color: var(--accent-ink) !important;
+    border: 2px solid var(--accent-edge) !important;
   }
 
   /* A focus ring that is actually visible. */
@@ -365,7 +459,7 @@ BASE_CSS = """
   }
 
   .group-card {
-    border-radius: 10px; padding: .6rem .3rem; text-align: center;
+    border-radius: var(--radius); padding: .6rem .3rem; text-align: center;
     border: 3px solid transparent;
   }
   .group-card .gc-n { font-weight: 800; white-space: nowrap; font-size: 1rem; }
@@ -388,7 +482,8 @@ BASE_CSS = """
     grid-template-columns: repeat(auto-fit, minmax(6rem, 1fr));
   }
   .practise-card {
-    border: 3px solid var(--border); border-radius: 12px; padding: .7rem .5rem;
+    border: var(--card-border-w) solid var(--card-border);
+    border-radius: var(--radius); padding: .7rem .5rem;
     text-align: center; background: #fff;
   }
   .practise-card .g {

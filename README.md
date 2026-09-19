@@ -69,6 +69,19 @@ leaving every test result intact.
 
 ## Look and feel, and how to change your mind about it
 
+**Default theme: `melon`** — light pastel fills (a spectrum of pink, peach,
+butter, lime, mint, blue and lilac) with deep same-hue ink for all text,
+under the original purple-to-blue header. White text on a pastel is only
+about 1.4:1, so no pastel ever carries white text; every chip and selected
+button pairs its fill with a dark ink at 7:1 or better. `test_theme.py`
+enforces that.
+
+Switch with one line in `.env` / Streamlit secrets:
+`PHONICS_THEME=vivid` (the earlier saturated high-contrast look) or
+`PHONICS_THEME=classic` (the original). The notes below describe vivid,
+which remains available unchanged.
+
+
 The default theme is **vivid**: high contrast, colourful, larger type. It was
 built for a teacher with low vision, so "is this readable?" is answered by
 numbers rather than by eye — `theme.py` carries a WCAG contrast function and

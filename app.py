@@ -61,8 +61,9 @@ def sound_chip(code: str, grapheme: str) -> str:
     """One tested sound: the letter itself, in its status colour and shape."""
     s = theme.status_style(code, ACTIVE_THEME)
     sym = f"{s['symbol']} " if s["symbol"] else ""
-    bg, fg = s["bg"], s["fg"]
-    return f"<span class='badge' style='background:{bg};color:{fg}'>{sym}{grapheme}</span>"
+    bg, fg, edge = s["bg"], s["fg"], s.get("edge", s["bg"])
+    return (f"<span class='badge' style='background:{bg};color:{fg};"
+            f"border:1.5px solid {edge}'>{sym}{grapheme}</span>")
 
 # The class check-in criteria. Letter-sound recognition is deliberately
 # absent -- the test screen measures it sound by sound, and asking her to
