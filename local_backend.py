@@ -209,6 +209,21 @@ class SqliteBackend:
         )
         self.conn.commit()
 
+    def update_class(self, class_id, fields: dict):
+        if not fields:
+            return
+        sets = ", ".join(f"{k}=?" for k in fields)
+        self.conn.execute(f"update classes set {sets} where id=?",
+                          (*fields.values(), class_id))
+        self.conn.commit()
+
+    def delete_class(self, class_id):
+        """Refused while the class still has students -- see SupabaseBackend."""
+        if self.list_students(class_id=class_id, include_archived=True):
+            raise ValueError("That class still has students.")
+        self.conn.execute("delete from classes where id=?", (class_id,))
+        self.conn.commit()
+
     def list_students(self, class_id=None, include_archived=False) -> list:
         sql = ("select s.*, c.name as _class_name, c.id as _class_id"
                " from students s left join classes c on c.id = s.class_id where 1=1")

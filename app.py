@@ -634,80 +634,182 @@ def render_classes(backend, read_only: bool = False):
             c1, c2 = st.columns(2)
             name = c1.text_input("Class name")
             level = c2.text_input("Level (e.g. Jolly Phonics 1)")
-            if st.form_submit_button("Add class") and name:
-                backend.add_class(name, level)
+            if st.form_submit_button("Add class") and name.strip():
+                backend.add_class(name.strip(), level.strip() or None)
                 st.rerun()
 
-    for c in backend.list_classes():
-        c1, c2, c3 = st.columns([3, 2, 1])
-        c1.write(f"**{c['name']}**")
-        c2.write(c.get("level") or "—")
-        if not read_only and c3.button("Archive", key=f"arch_c_{c['id']}"):
-            backend.set_class_archived(c["id"], True)
+    classes = backend.list_classes(include_archived=True)
+    if not classes:
+        st.caption("No classes yet.")
+        return
+
+    st.caption(
+        "Edit names and levels straight in the grid, then Save. Archiving hides "
+        "a class without losing anything."
+    )
+    rows = [
+        {"Class": c["name"], "Level": c.get("level") or "", "Archived": bool(c["archived"])}
+        for c in classes
+    ]
+    edited = st.data_editor(
+        pd.DataFrame(rows),
+        column_config={
+            "Class": st.column_config.TextColumn("Class", required=True),
+            "Level": st.column_config.TextColumn("Level"),
+            "Archived": st.column_config.CheckboxColumn("Archived"),
+        },
+        hide_index=True, use_container_width=True, num_rows="fixed",
+        disabled=read_only, key="classes_editor",
+    )
+
+    if not read_only and st.button("Save class changes", type="primary"):
+        changed = 0
+        for original, new_row in zip(classes, edited.to_dict("records")):
+            fields = {}
+            name = (new_row["Class"] or "").strip()
+            if name and name != original["name"]:
+                fields["name"] = name
+            level = (new_row["Level"] or "").strip() or None
+            if level != (original.get("level") or None):
+                fields["level"] = level
+            if bool(new_row["Archived"]) != bool(original["archived"]):
+                fields["archived"] = bool(new_row["Archived"])
+            if fields:
+                backend.update_class(original["id"], fields)
+                changed += 1
+        st.success(f"Saved {changed} change(s).") if changed else st.info("Nothing changed.")
+        if changed:
             st.rerun()
 
-    archived = [c for c in backend.list_classes(include_archived=True) if c["archived"]]
-    if archived:
-        with st.expander(f"Archived classes ({len(archived)})"):
-            for c in archived:
-                c1, c2 = st.columns([4, 1])
-                c1.write(f"{c['name']} ({c.get('level') or '—'})")
-                if not read_only and c2.button("Restore", key=f"res_c_{c['id']}"):
-                    backend.set_class_archived(c["id"], False)
+    if read_only:
+        return
+
+    with st.expander("Delete a class permanently"):
+        # Deleting is guarded on the class being empty rather than cascading:
+        # a class deleted by accident would take every test and check-in of
+        # every student in it, and none of that can be undone.
+        st.caption(
+            "This cannot be undone. A class can only be deleted once it has no "
+            "students — move them to another class on the Students page first, "
+            "or archive the class instead."
+        )
+        counts = {
+            c["id"]: len(backend.list_students(class_id=c["id"], include_archived=True))
+            for c in classes
+        }
+        options = {f"{c['name']} — {counts[c['id']]} student(s)": c for c in classes}
+        picked = st.selectbox("Class", list(options.keys()), key="del_class_pick")
+        target = options[picked]
+        if counts[target["id"]]:
+            st.warning(
+                f"**{target['name']}** still has {counts[target['id']]} student(s), "
+                "so it cannot be deleted yet."
+            )
+        else:
+            confirm = st.checkbox(
+                f"Yes, permanently delete **{target['name']}**", key="del_class_confirm"
+            )
+            if st.button("Delete class", disabled=not confirm):
+                try:
+                    backend.delete_class(target["id"])
+                except ValueError as e:
+                    st.error(str(e))
+                else:
+                    st.success(f"Deleted {target['name']}.")
                     st.rerun()
 
 
 def render_students(backend, read_only: bool = False):
     st.subheader("Students")
-    classes = backend.list_classes()
+    classes = backend.list_classes(include_archived=True)
     if not classes:
         st.info("Add a class first.")
         return
-    class_options = {c["name"]: c["id"] for c in classes}
+    class_by_name = {c["name"]: c["id"] for c in classes}
+    class_names = list(class_by_name.keys())
 
     if not read_only:
         with st.form("new_student", clear_on_submit=True):
             c1, c2, c3 = st.columns(3)
-            class_name = c1.selectbox("Class", list(class_options.keys()))
+            class_name = c1.selectbox("Class", class_names)
             name = c2.text_input("Student name")
             contact = c3.text_input("Parent contact (optional)")
             photo = st.file_uploader("Photo (optional headshot)",
                                      type=["jpg", "jpeg", "png", "webp"])
-            if st.form_submit_button("Add student") and name:
+            if st.form_submit_button("Add student") and name.strip():
                 backend.add_student(
-                    class_options[class_name], name, contact,
+                    class_by_name[class_name], name.strip(), contact.strip() or None,
                     process_photo(photo) if photo else None,
                 )
                 st.rerun()
 
-    students = backend.list_students()
+    students = backend.list_students(include_archived=True)
     if not students:
         st.caption("No students yet.")
-    for s in students:
-        c1, c2, c3, c4 = st.columns([1, 3, 2, 1])
-        if s.get("photo_b64"):
-            c1.markdown(
-                f'<img src="data:image/jpeg;base64,{s["photo_b64"]}" '
-                'style="width:44px;height:44px;border-radius:50%;object-fit:cover">',
-                unsafe_allow_html=True,
-            )
-        else:
-            c1.markdown("<div style='font-size:1.6rem'>🧒</div>", unsafe_allow_html=True)
-        c2.write(f"**{s['name']}**")
-        c3.write((s.get("classes") or {}).get("name") or "—")
-        if not read_only and c4.button("Archive", key=f"arch_s_{s['id']}"):
-            backend.set_student_archived(s["id"], True)
+        return
+
+    st.caption(
+        "Fix a spelling, move a child to another class, or archive one — edit in "
+        "the grid and press Save. Nothing is written until you do."
+    )
+    name_by_id = {c["id"]: c["name"] for c in classes}
+    rows = [
+        {
+            "Student": s["name"],
+            "Class": name_by_id.get((s.get("classes") or {}).get("id"), class_names[0]),
+            "Parent contact": s.get("parent_contact") or "",
+            "Archived": bool(s["archived"]),
+        }
+        for s in students
+    ]
+    edited = st.data_editor(
+        pd.DataFrame(rows),
+        column_config={
+            "Student": st.column_config.TextColumn("Student", required=True),
+            "Class": st.column_config.SelectboxColumn("Class", options=class_names),
+            "Parent contact": st.column_config.TextColumn("Parent contact"),
+            "Archived": st.column_config.CheckboxColumn("Archived"),
+        },
+        hide_index=True, use_container_width=True, num_rows="fixed",
+        disabled=read_only, key="students_editor",
+    )
+
+    if not read_only and st.button("Save student changes", type="primary"):
+        changed = 0
+        for original, new_row in zip(students, edited.to_dict("records")):
+            fields = {}
+            name = (new_row["Student"] or "").strip()
+            if name and name != original["name"]:
+                fields["name"] = name
+            contact = (new_row["Parent contact"] or "").strip() or None
+            if contact != (original.get("parent_contact") or None):
+                fields["parent_contact"] = contact
+            class_id = class_by_name.get(new_row["Class"])
+            if class_id and class_id != (original.get("classes") or {}).get("id"):
+                fields["class_id"] = class_id
+            if bool(new_row["Archived"]) != bool(original["archived"]):
+                fields["archived"] = bool(new_row["Archived"])
+            if fields:
+                backend.update_student(original["id"], fields)
+                changed += 1
+        st.success(f"Saved {changed} change(s).") if changed else st.info("Nothing changed.")
+        if changed:
             st.rerun()
 
-    archived = [s for s in backend.list_students(include_archived=True) if s["archived"]]
-    if archived:
-        with st.expander(f"Archived students ({len(archived)})"):
-            for s in archived:
-                c1, c2 = st.columns([4, 1])
-                c1.write(s["name"])
-                if not read_only and c2.button("Restore", key=f"res_s_{s['id']}"):
-                    backend.set_student_archived(s["id"], False)
-                    st.rerun()
+    if read_only:
+        return
+
+    # Photos cannot live in the grid, so they get their own control rather
+    # than being settable only at the moment a student is created.
+    with st.expander("Add or change a photo"):
+        by_label = {s["name"]: s for s in students}
+        who = st.selectbox("Student", list(by_label.keys()), key="photo_student")
+        shot = st.file_uploader("Photo", type=["jpg", "jpeg", "png", "webp"],
+                                key="photo_file")
+        if st.button("Save photo", disabled=shot is None):
+            backend.update_student(by_label[who]["id"], {"photo_b64": process_photo(shot)})
+            st.success(f"Photo updated for {who}.")
+            st.rerun()
 
 
 # ---------------------------------------------------------------------------

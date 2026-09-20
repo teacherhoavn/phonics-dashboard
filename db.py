@@ -81,6 +81,21 @@ class SupabaseBackend:
             "id", class_id
         ).execute()
 
+    def update_class(self, class_id: str, fields: dict):
+        if fields:
+            self.client.table("classes").update(fields).eq("id", class_id).execute()
+
+    def delete_class(self, class_id: str):
+        """Permanent, and refused while the class still has students.
+
+        The UI disables the button in that case, but the check lives here
+        too: a class deleted by accident would take every test and check-in
+        belonging to its students, and none of that can be recovered.
+        """
+        if self.list_students(class_id=class_id, include_archived=True):
+            raise ValueError("That class still has students.")
+        self.client.table("classes").delete().eq("id", class_id).execute()
+
     def list_students(self, class_id: str = None, include_archived: bool = False) -> list:
         q = self.client.table("students").select("*, classes(id, name)").order("name")
         if class_id:
