@@ -748,9 +748,13 @@ def render_students(backend, read_only: bool = False):
         st.caption("No students yet.")
         return
 
+    active = sum(1 for s in students if not s["archived"])
+    archived_n = len(students) - active
     st.caption(
-        "Fix a spelling, move a child to another class, or archive one — edit in "
-        "the grid and press Save. Nothing is written until you do."
+        f"**{active} student(s)**"
+        + (f" · {archived_n} archived" if archived_n else "")
+        + " — fix a spelling, move a child to another class, or archive one. "
+        "Edit in the grid and press Save; nothing is written until you do."
     )
     name_by_id = {c["id"]: c["name"] for c in classes}
     rows = [
@@ -762,15 +766,20 @@ def render_students(backend, read_only: bool = False):
         }
         for s in students
     ]
+    table = pd.DataFrame(rows)
+    # Number the rows from 1 so she can see at a glance how many children are
+    # in the class. It is the index, not a column, so it stays uneditable and
+    # cannot be mistaken for data.
+    table.index = range(1, len(table) + 1)
     edited = st.data_editor(
-        pd.DataFrame(rows),
+        table,
         column_config={
             "Student": st.column_config.TextColumn("Student", required=True),
             "Class": st.column_config.SelectboxColumn("Class", options=class_names),
             "Parent contact": st.column_config.TextColumn("Parent contact"),
             "Archived": st.column_config.CheckboxColumn("Archived"),
         },
-        hide_index=True, use_container_width=True, num_rows="fixed",
+        hide_index=False, use_container_width=True, num_rows="fixed",
         disabled=read_only, key="students_editor",
     )
 
