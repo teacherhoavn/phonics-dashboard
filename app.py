@@ -1379,6 +1379,32 @@ def render_parent_sheet(token: str):
 # Auth + shell
 # ---------------------------------------------------------------------------
 
+# The authenticated client is stored, never the backend object built around
+# it. Streamlit keeps session state across a code update, so a stored
+# instance of OUR class outlives the module that defined it -- after a
+# deploy that adds a method, every logged-in session raises AttributeError
+# until the user signs out. Rebuilding the wrapper each run keeps the code
+# and the session in step; the client belongs to the supabase package, which
+# our deploys never redefine.
+def current_backend():
+    auth = st.session_state.get("auth")
+    if not auth:
+        return None
+    if auth.get("demo"):
+        from local_backend import SqliteBackend
+
+        return SqliteBackend()
+    return db.SupabaseBackend(auth["client"])
+
+
+def remember_login(backend):
+    st.session_state.auth = {
+        "demo": getattr(backend, "is_demo", False),
+        "client": getattr(backend, "client", None),
+    }
+    st.session_state.is_admin = backend.is_admin()
+
+
 def render_login():
     render_hero("Phonics Progress", "Teacher login")
     if not db.USE_SUPABASE:
@@ -1394,8 +1420,7 @@ def render_login():
     if submitted:
         try:
             backend, refresh = db.sign_in(email, password)
-            st.session_state.backend = backend
-            st.session_state.is_admin = backend.is_admin()
+            remember_login(backend)
             if refresh:
                 set_browser_cookie(AUTH_COOKIE, refresh)
             st.rerun()
@@ -1420,22 +1445,21 @@ def try_resume_session() -> bool:
         return False
     if not backend:
         return False
-    st.session_state.backend = backend
-    st.session_state.is_admin = backend.is_admin()
+    remember_login(backend)
     # Supabase rotates refresh tokens: store the new one for next reload.
     set_browser_cookie(AUTH_COOKIE, new_token)
     return True
 
 
 def render_teacher_app():
-    backend = st.session_state.backend
+    backend = current_backend()
     read_only = not st.session_state.get("is_admin", False)
 
     with st.sidebar:
         try:
             st.write(f"Logged in as **{backend.current_email()}**")
         except Exception:
-            del st.session_state.backend
+            st.session_state.pop("auth", None)
             st.rerun()
             return
         if getattr(backend, "is_demo", False):
@@ -1444,7 +1468,7 @@ def render_teacher_app():
             st.caption("👁️ Read-only access")
         if st.button("Log out"):
             backend.sign_out()
-            del st.session_state.backend
+            st.session_state.pop("auth", None)
             clear_browser_cookie(AUTH_COOKIE)
             st.rerun()
         st.divider()
@@ -1482,7 +1506,7 @@ if db.USE_SUPABASE and not (db.SUPABASE_URL and db.SUPABASE_KEY):
 _token = st.query_params.get("token")
 if _token:
     render_parent_sheet(_token)
-elif "backend" in st.session_state:
+elif "auth" in st.session_state:
     render_teacher_app()
 elif db.USE_SUPABASE and try_resume_session():
     render_teacher_app()

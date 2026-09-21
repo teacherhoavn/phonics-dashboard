@@ -15,7 +15,7 @@ selected whenever SUPABASE_URL / SUPABASE_KEY are configured.
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, datetime, timezone
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -272,7 +272,7 @@ class SupabaseBackend:
                     "checkin_date": on_date.isoformat(),
                     "absent": absent,
                     "notes": (notes or "").strip() or None,
-                    "updated_at": "now()",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                 },
                 on_conflict="student_id,checkin_date",
             )

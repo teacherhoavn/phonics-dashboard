@@ -316,6 +316,7 @@ deleted session can never leave a stale one behind.
 | `test_rollup.py` | Tests for `rollup.py` and the seed data. |
 | `test_theme.py` | Contrast floors and theme-switching tests. |
 | `test_admin.py` | Roster editing, and the guard on deleting a class. |
+| `test_backend_contract.py` | That the Supabase and demo backends stay interchangeable. |
 | `test_parent_sheet.py` | Parent sheet contents, and that it stays read-only. |
 
 ## Tests
@@ -325,6 +326,7 @@ venv/bin/python test_rollup.py
 venv/bin/python test_theme.py
 venv/bin/python test_parent_sheet.py
 venv/bin/python test_admin.py
+venv/bin/python test_backend_contract.py
 ```
 
 Covers the roll-up rules and asserts the seed file really holds 42 uniquely
