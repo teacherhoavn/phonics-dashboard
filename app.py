@@ -198,6 +198,25 @@ def render_hero(title: str, subtitle: str = None, photo_b64: str = None,
 # Screen 1: the phonics group test (tap-only)
 # ---------------------------------------------------------------------------
 
+# The chosen test date is kept in a plain session key, NOT only in the date
+# widget's own key. Streamlit discards a widget's stored value on any run
+# where that widget is not drawn, and the "change child" screen does not draw
+# it -- so relying on the widget key silently reset the date to today between
+# children, which is precisely when a backfill needs it to stay put.
+DATE_KEY = "test_date_value"
+
+
+def _remember_date():
+    st.session_state[DATE_KEY] = st.session_state.test_date
+
+
+def _use_today():
+    """Reset the test date. A callback, because Streamlit forbids writing to a
+    widget's key after that widget has been created in the same run."""
+    st.session_state[DATE_KEY] = date.today()
+    st.session_state.test_date = date.today()
+
+
 def _sound_key(student_id: str, group_id: str, sound_id: str) -> str:
     # Group and student are in the key so switching either starts clean
     # rather than inheriting the previous child's taps.
@@ -296,14 +315,40 @@ def render_phonics_test(backend):
     group_number = labels.get(picked_label or f"G{suggested}", suggested)
     group = by_number[group_number]
 
-    # Date is almost always today, so it lives behind a summary line rather
-    # than taking a labelled input's worth of screen on every test.
-    if "test_date" not in st.session_state:
-        st.session_state.test_date = date.today()
-    with st.expander(f"Group {group_number}: {group['sounds_preview']}  ·  "
-                     f"{st.session_state.test_date.strftime('%-d %b %Y')}"):
-        st.date_input("Test date", key="test_date")
-    tested_on = st.session_state.test_date
+    # The date is almost always today, so it stays behind a summary line
+    # rather than taking a labelled input's worth of screen on every test --
+    # but the line has to say "date" plainly, or entering an older test looks
+    # impossible.
+    if DATE_KEY not in st.session_state:
+        st.session_state[DATE_KEY] = date.today()
+    tested_on = st.session_state[DATE_KEY]
+    backdated = tested_on != date.today()
+
+    with st.expander(
+        f"📅 Test date: {tested_on.strftime('%-d %b %Y')}"
+        f"  ·  Group {group_number}: {group['sounds_preview']}",
+        expanded=backdated,
+    ):
+        st.date_input(
+            "Record this test on", value=tested_on, key="test_date",
+            on_change=_remember_date,
+            help="Pick an earlier date to enter tests you ran before using the app.",
+        )
+        st.caption(
+            "The date stays until you change it, so a set of older tests can be "
+            "entered one child after another without setting it each time."
+        )
+    tested_on = st.session_state[DATE_KEY]
+
+    # Because the date persists between children, an unnoticed one would
+    # quietly file today's tests under a past date.
+    if backdated:
+        left, right = st.columns([3, 1])
+        left.warning(
+            f"Saving to **{tested_on.strftime('%-d %b %Y')}** — not today."
+        )
+        right.button("Use today", on_click=_use_today, use_container_width=True,
+                     key="reset_test_date")
 
     prefill = backend.latest_results_for_group(student["id"], group["id"])
     this_row = next((r for r in rows if r["group_number"] == group_number), None)
