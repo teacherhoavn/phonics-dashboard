@@ -361,6 +361,33 @@ BASE_CSS = """
      compact one on a phone where five wrapped lines push the sounds down. */
   .only-narrow { display: none; }
 
+  /* Keep a score row on ONE line. Streamlit stacks columns below ~640px,
+     which turned each criterion into four rows: name, minus, value, plus. */
+  [data-testid="stHorizontalBlock"]:has(.crit-name) {
+    flex-wrap: nowrap !important; align-items: center; gap: .35rem;
+    margin-bottom: .15rem;
+  }
+  [data-testid="stHorizontalBlock"]:has(.crit-name) > [data-testid="stColumn"] {
+    min-width: 0 !important;
+  }
+  [data-testid="stHorizontalBlock"]:has(.crit-name) > [data-testid="stColumn"]:first-child {
+    flex: 1 1 auto;
+  }
+  [data-testid="stHorizontalBlock"]:has(.crit-name) > [data-testid="stColumn"]:not(:first-child) {
+    flex: 0 0 3.1rem;
+  }
+  [data-testid="stHorizontalBlock"]:has(.crit-name) button {
+    min-height: var(--tap-min); font-size: 1.3rem; font-weight: 700;
+    padding-left: 0; padding-right: 0;
+  }
+
+  .crit-name { font-weight: 600; font-size: 1rem; line-height: 1.25; }
+  .crit-help { font-size: .82rem; color: var(--muted); line-height: 1.25; }
+  .crit-score {
+    font-size: 1.5rem; font-weight: 800; text-align: center; line-height: 2.1rem;
+    color: var(--ink);
+  }
+
   .badge {
     display: inline-block; padding: .2rem .6rem; border-radius: 999px;
     font-size: .95rem; font-weight: 700; margin: .1rem .25rem .1rem 0;

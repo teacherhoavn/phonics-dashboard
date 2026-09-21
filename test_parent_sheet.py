@@ -49,7 +49,8 @@ def test_sheet_returns_the_named_student_only():
     b, token = fresh()
     sheet = b.get_student_sheet(token)
     assert sheet["student"]["name"].startswith("An")
-    assert set(sheet) == {"student", "groups", "practise", "timeline", "last_checkin"}
+    assert set(sheet) == {"student", "groups", "practise", "timeline",
+                          "criteria", "radar", "trend", "last_checkin"}
 
 
 def test_bad_token_returns_nothing():
@@ -78,6 +79,53 @@ def test_practise_list_is_in_teaching_order():
     practise = b.get_student_sheet(token)["practise"]
     keys = [(p["group_number"], p["grapheme"]) for p in practise]
     assert keys == sorted(keys, key=lambda k: k[0]) or len(keys) <= 1
+
+
+def test_absence_is_never_a_zero_in_the_trend():
+    """The whole reason absence is a flag: a 0 would read as "did badly"."""
+    from datetime import date, timedelta
+
+    b, token = fresh()
+    sid = b.conn.execute(
+        "select id from students where access_token=?", (token,)
+    ).fetchone()["id"]
+    crits = b.list_criteria()
+    b.save_checkin(sid, date.today() - timedelta(days=2),
+                   {crits[0]["id"]: 9, crits[1]["id"]: 9})
+    b.save_checkin(sid, date.today() - timedelta(days=1), {}, absent=True)
+    trend = b.get_student_sheet(token)["trend"]
+    assert all(p["average"] > 0 for p in trend)
+    assert not any(str(p["date"]).endswith(
+        (date.today() - timedelta(days=1)).isoformat()[-5:]) for p in trend)
+
+
+def test_not_applicable_criteria_are_left_out_of_the_average():
+    """No homework set must not drag the average down."""
+    from datetime import date
+
+    b, token = fresh()
+    sid = b.conn.execute(
+        "select id from students where access_token=?", (token,)
+    ).fetchone()["id"]
+    crits = b.list_criteria()
+    b.save_checkin(sid, date.today(), {crits[0]["id"]: 10, crits[1]["id"]: 10})
+    trend = b.get_student_sheet(token)["trend"]
+    assert trend[-1]["average"] == 10.0
+
+
+def test_parent_hidden_criteria_stay_off_the_sheet():
+    from datetime import date
+
+    b, token = fresh()
+    sid = b.conn.execute(
+        "select id from students where access_token=?", (token,)
+    ).fetchone()["id"]
+    crits = b.list_criteria()
+    b.update_criterion(crits[1]["id"], {"parent_visible": 0})
+    b.save_checkin(sid, date.today(), {c["id"]: 9 for c in crits})
+    sheet = b.get_student_sheet(token)
+    assert crits[1]["code"] not in [c["code"] for c in sheet["criteria"]]
+    assert crits[1]["code"] not in sheet["radar"]
 
 
 def test_timeline_is_teacher_activity_newest_first():

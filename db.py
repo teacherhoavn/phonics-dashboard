@@ -240,45 +240,106 @@ class SupabaseBackend:
             .data
         )
 
-    # -- class check-ins ---------------------------------------------------
+    # -- lesson check-ins --------------------------------------------------
 
-    def latest_checkins(self, student_ids: list) -> dict:
+    def list_criteria(self, include_inactive: bool = False) -> list:
+        q = self.client.table("checkin_criteria").select("*").order("order_index")
+        if not include_inactive:
+            q = q.eq("active", True)
+        return q.execute().data
+
+    def add_criterion(self, fields: dict):
+        self.client.table("checkin_criteria").insert(fields).execute()
+
+    def update_criterion(self, criterion_id: str, fields: dict):
+        if fields:
+            self.client.table("checkin_criteria").update(fields).eq(
+                "id", criterion_id).execute()
+
+    def save_checkin(self, student_id: str, on_date: date, scores: dict,
+                     absent: bool = False, notes: str = None):
+        """One check-in per student per day, rewritten in place.
+
+        `scores` is {criterion_id: 1..10}; a criterion left out simply has no
+        row, which is how "not applicable" is stored. Absent is a flag, never
+        a score of zero -- see schema.sql.
+        """
+        row = (
+            self.client.table("checkins")
+            .upsert(
+                {
+                    "student_id": student_id,
+                    "checkin_date": on_date.isoformat(),
+                    "absent": absent,
+                    "notes": (notes or "").strip() or None,
+                    "updated_at": "now()",
+                },
+                on_conflict="student_id,checkin_date",
+            )
+            .execute()
+            .data[0]
+        )
+        self.client.table("checkin_scores").delete().eq(
+            "checkin_id", row["id"]).execute()
+        if not absent and scores:
+            self.client.table("checkin_scores").insert([
+                {"checkin_id": row["id"], "criterion_id": cid, "score": int(v)}
+                for cid, v in scores.items() if v
+            ]).execute()
+        return row["id"]
+
+    def checkins_on(self, student_ids: list, on_date: date) -> dict:
+        """{student_id: {"absent":…, "notes":…, "scores": {criterion_id: n}}}"""
         if not student_ids:
             return {}
         rows = (
-            self.client.table("skill_checkins")
-            .select("*")
+            self.client.table("checkins")
+            .select("*, checkin_scores(criterion_id, score)")
+            .in_("student_id", student_ids)
+            .eq("checkin_date", on_date.isoformat())
+            .execute()
+            .data
+        )
+        return {
+            r["student_id"]: {
+                "absent": r["absent"], "notes": r.get("notes"),
+                "scores": {s["criterion_id"]: s["score"]
+                           for s in (r.get("checkin_scores") or [])},
+            }
+            for r in rows
+        }
+
+    def latest_checkins(self, student_ids: list) -> dict:
+        """Most recent check-in per student, for pre-filling the next one."""
+        if not student_ids:
+            return {}
+        rows = (
+            self.client.table("checkins")
+            .select("*, checkin_scores(criterion_id, score)")
             .in_("student_id", student_ids)
             .order("checkin_date", desc=True)
-            .order("created_at", desc=True)
             .execute()
             .data
         )
         latest = {}
         for r in rows:
-            latest.setdefault(r["student_id"], r)
+            latest.setdefault(r["student_id"], {
+                "checkin_date": r["checkin_date"], "absent": r["absent"],
+                "scores": {s["criterion_id"]: s["score"]
+                           for s in (r.get("checkin_scores") or [])},
+            })
         return latest
 
-    def insert_checkins(self, rows: list):
-        if rows:
-            self.client.table("skill_checkins").insert(rows).execute()
-
-    def list_checkins(self, student_id: str, limit: int = 20) -> list:
+    def list_student_checkins(self, student_id: str, limit: int = 20) -> list:
         return (
-            self.client.table("skill_checkins")
-            .select("*")
+            self.client.table("checkins")
+            .select("*, checkin_scores(criterion_id, score)")
             .eq("student_id", student_id)
             .order("checkin_date", desc=True)
             .limit(limit)
             .execute()
             .data
         )
-
-    def update_checkin(self, checkin_id: str, fields: dict):
-        self.client.table("skill_checkins").update(fields).eq("id", checkin_id).execute()
-
-    def delete_checkin(self, checkin_id: str):
-        self.client.table("skill_checkins").delete().eq("id", checkin_id).execute()
 
     # -- auth --------------------------------------------------------------
 

@@ -65,41 +65,12 @@ def sound_chip(code: str, grapheme: str) -> str:
     return (f"<span class='badge' style='background:{bg};color:{fg};"
             f"border:1.5px solid {edge}'>{sym}{grapheme}</span>")
 
-# The class check-in criteria. Letter-sound recognition is deliberately
-# absent -- the test screen measures it sound by sound, and asking her to
-# also rate it here would be entering the same judgement twice.
-#
-# These are the four remaining Jolly Phonics core skills (blending,
-# segmenting, letter formation, tricky words) plus the two things that
-# actually predict trouble at this age: pencil grip and whether the child
-# joins in at all.
-# (field, short grid header, full name, what it means)
-# The grid header is short on purpose -- nine columns have to fit a tablet
-# screen -- but parents and the column legend get the full name, because
-# "Grip" and "Tricky" mean nothing to someone outside the classroom.
-SKILL_CRITERIA = [
-    ("blending_rating", "Blend", "Blending",
-     "Runs sounds together to read a word (c-a-t → cat)"),
-    ("segmenting_rating", "Segment", "Segmenting",
-     "Hears the separate sounds in a spoken word (cat → c-a-t)"),
-    ("letter_formation_rating", "Letters", "Letter formation",
-     "Forms letters correctly — right start point and direction"),
-    ("pencil_grip_rating", "Grip", "Pencil grip",
-     "Holds the pencil in a tripod grip without reminders"),
-    ("tricky_words_rating", "Tricky", "Tricky words",
-     "Reads the tricky words taught so far (the, I, he, was…)"),
-    ("participation_rating", "Joins in", "Joining in",
-     "Does the actions, sings, attends to the lesson"),
-]
-SKILL_FIELDS = [f for f, _s, _n, _d in SKILL_CRITERIA]
-SKILL_LABELS = [s for _f, s, _n, _d in SKILL_CRITERIA]
-LABEL_TO_SKILL = {s: f for f, s, _n, _d in SKILL_CRITERIA}
-
-# 1-4, not 1-5: for beginners the middle of a five-point scale carries no
-# information, and fewer options makes the grid faster.
-RATING_SCALE = ["1 · Not yet", "2 · Emerging", "3 · Developing", "4 · Secure"]
-RATING_TO_INT = {label: i + 1 for i, label in enumerate(RATING_SCALE)}
-INT_TO_RATING = {i + 1: label for i, label in enumerate(RATING_SCALE)}
+# Lesson scores run 1-10. Absence is a flag on the check-in and "not
+# applicable" is simply no score, so neither is ever stored as 0 -- a 0 mixed
+# into an average turns "was away" into "did badly" on a parent's trend line,
+# and that cannot be undone after a term of entries.
+SCORE_MIN, SCORE_MAX = 1, 10
+DEFAULT_SCORE = 8
 
 AUTH_COOKIE = "phonics_sb_refresh"
 
@@ -208,6 +179,46 @@ DATE_KEY = "test_date_value"
 
 def _remember_date():
     st.session_state[DATE_KEY] = st.session_state.test_date
+
+
+def _score_key(student_id: str, criterion_id: str) -> str:
+    return f"sc_{student_id}_{criterion_id}"
+
+
+def _bump(key: str, delta: int):
+    current = st.session_state.get(key, DEFAULT_SCORE) or DEFAULT_SCORE
+    st.session_state[key] = max(SCORE_MIN, min(SCORE_MAX, current + delta))
+
+
+def _clear_score(key: str):
+    st.session_state[key] = None
+
+
+def render_stepper(label: str, key: str, help_text: str = None):
+    """A score as minus / value / plus.
+
+    Ten buttons in a row would be ~34px each on a phone, below a reliable tap
+    target, so the value is nudged instead. It starts from last lesson's
+    score, which means most children need no taps at all.
+    """
+    value = st.session_state.get(key)
+    c1, c2, c3, c4 = st.columns([3, 1, 1.2, 1])
+    c1.markdown(
+        f"<div class='crit-name'>{label}</div>"
+        + (f"<div class='crit-help'>{help_text}</div>" if help_text else ""),
+        unsafe_allow_html=True,
+    )
+    # Full-width plus/minus (U+FF0B, U+2212), not "+" and "-": Streamlit
+    # renders button labels as markdown, where a lone "+" is a list bullet
+    # and renders as an empty button.
+    c2.button("−", key=f"{key}_dn", on_click=_bump, args=(key, -1),
+              use_container_width=True, disabled=value is None)
+    c3.markdown(
+        f"<div class='crit-score'>{value if value is not None else '—'}</div>",
+        unsafe_allow_html=True,
+    )
+    c4.button("＋", key=f"{key}_up", on_click=_bump, args=(key, 1),
+              use_container_width=True)
 
 
 def _use_today():
@@ -436,6 +447,8 @@ def render_phonics_test(backend):
         )
         st.rerun()
 
+    render_lesson_scores(backend, student, tested_on)
+
     # --- recent tests, with a way to undo a mis-entry ----------------------
     sessions = backend.list_test_sessions(student["id"], limit=8)
     if sessions:
@@ -463,29 +476,71 @@ def render_phonics_test(backend):
 # Screen 2: class check-in grid
 # ---------------------------------------------------------------------------
 
-def _checkin_column_config():
-    config = {
-        short: st.column_config.SelectboxColumn(
-            short, options=RATING_SCALE, help=f"{name} — {desc}",
+def render_lesson_scores(backend, student, on_date):
+    """The six lesson criteria for the child already on screen.
+
+    She is sitting with this child anyway, so scoring them here costs nothing
+    extra; the whole-class grid stays for when she would rather do everyone
+    at the end.
+    """
+    criteria = backend.list_criteria()
+    if not criteria:
+        return
+
+    st.divider()
+    existing = backend.checkins_on([student["id"]], on_date).get(student["id"])
+    previous = backend.latest_checkins([student["id"]]).get(student["id"], {})
+    source = existing["scores"] if existing else previous.get("scores", {})
+
+    for c in criteria:
+        key = _score_key(student["id"], c["id"])
+        if key not in st.session_state:
+            st.session_state[key] = source.get(c["id"])
+
+    absent_key = f"absent_{student['id']}_{on_date.isoformat()}"
+    if absent_key not in st.session_state:
+        st.session_state[absent_key] = bool(existing["absent"]) if existing else False
+
+    head, mark = st.columns([2, 1])
+    head.markdown(f"**Lesson scores** · {on_date.strftime('%-d %b')}")
+    absent = mark.toggle("Absent", key=absent_key)
+
+    if absent:
+        st.info("Marked absent — no scores are recorded, and this lesson is "
+                "left out of the averages rather than counted as zero.")
+    else:
+        st.caption(
+            "Out of 10, starting from last lesson. Leave one blank if it did "
+            "not apply — no homework set, say."
         )
-        for (_f, short, name, desc) in SKILL_CRITERIA
-    }
-    config["Student"] = st.column_config.TextColumn("Student", disabled=True, width="small")
-    config["Phonics"] = st.column_config.TextColumn(
-        "Phonics", disabled=True, width="small",
-        help="Read-only. Comes from the Phonics test screen — never typed here.",
-    )
-    config["Notes"] = st.column_config.TextColumn("Notes", width="medium")
-    return config
+        for c in criteria:
+            render_stepper(c["name_en"], _score_key(student["id"], c["id"]),
+                           c.get("description_en"))
+
+    note = st.text_area("Note for this lesson (optional)",
+                        value=(existing or {}).get("notes") or "",
+                        key=f"cnote_{student['id']}_{on_date.isoformat()}",
+                        max_chars=600)
+
+    if st.button("Save lesson scores", key=f"save_scores_{student['id']}"):
+        scores = {
+            c["id"]: st.session_state.get(_score_key(student["id"], c["id"]))
+            for c in criteria
+        }
+        backend.save_checkin(student["id"], on_date,
+                             {k: v for k, v in scores.items() if v},
+                             absent=absent, notes=note)
+        st.success(
+            f"Saved for {student['name']}."
+            if not absent else f"{student['name']} marked absent.")
 
 
 def render_class_checkin(backend):
     st.subheader("Class check-in")
-    st.caption(
-        "Rate the whole class in one grid. It starts from each student's last "
-        "check-in, so you only change what moved. Letter sounds are not here — "
-        "they come from the Phonics test screen and show as a read-only column."
-    )
+    criteria = backend.list_criteria()
+    if not criteria:
+        st.info("No criteria yet — add some on the Criteria page.")
+        return
 
     classes = backend.list_classes()
     if not classes:
@@ -501,66 +556,163 @@ def render_class_checkin(backend):
         st.info("This class has no students yet.")
         return
 
-    latest = backend.latest_checkins([s["id"] for s in students])
-    progress = backend.group_progress([s["id"] for s in students])
+    ids = [s["id"] for s in students]
+    today_rows = backend.checkins_on(ids, checkin_date)
+    previous = backend.latest_checkins(ids)
+    progress = backend.group_progress(ids)
+
+    st.caption(
+        "Scores are out of 10, starting from each child's last lesson. Tick "
+        "**Away** for an absence — it is left out of the averages rather than "
+        "counted as a zero. Leave a cell blank if it did not apply."
+    )
+    with st.expander("What the columns mean"):
+        for c in criteria:
+            st.markdown(f"- **{c['name_en']}** — {c.get('description_en') or ''}")
 
     rows = []
     for s in students:
-        last = latest.get(s["id"], {})
+        here = today_rows.get(s["id"])
+        source = here["scores"] if here else previous.get(s["id"], {}).get("scores", {})
         row = {
+            "#": s.get("order_index"),
             "Student": s["name"],
             "Phonics": compact_progress(group_rows_for(progress, s["id"])),
+            "Away": bool(here["absent"]) if here else False,
         }
-        for field, short, _name, _desc in SKILL_CRITERIA:
-            row[short] = INT_TO_RATING.get(last.get(field))
-        row["Notes"] = ""
+        for c in criteria:
+            row[c["short_label"]] = source.get(c["id"])
+        row["Notes"] = (here or {}).get("notes") or ""
         rows.append(row)
 
-    with st.expander("What the columns mean"):
-        for _f, short, name, desc in SKILL_CRITERIA:
-            st.markdown(f"- **{short}** — {name}: {desc}")
-        st.caption("Scale: 1 Not yet · 2 Emerging · 3 Developing · 4 Secure")
-        st.caption(
-            "Letter sounds are not rated here — the Phonics column is filled "
-            "in from the test screen and cannot be edited."
-        )
+    config = {
+        "#": st.column_config.NumberColumn("#", disabled=True, width="small"),
+        "Student": st.column_config.TextColumn("Student", disabled=True),
+        "Phonics": st.column_config.TextColumn(
+            "Phonics (from tests)", disabled=True,
+            help="Read-only. Comes from the Phonics test screen."),
+        "Away": st.column_config.CheckboxColumn("Away"),
+        "Notes": st.column_config.TextColumn("Notes"),
+    }
+    for c in criteria:
+        config[c["short_label"]] = st.column_config.NumberColumn(
+            c["short_label"], min_value=SCORE_MIN, max_value=SCORE_MAX, step=1,
+            width="small", help=f"{c['name_en']} — {c.get('description_en') or ''}")
 
     edited = st.data_editor(
-        pd.DataFrame(rows),
-        column_config=_checkin_column_config(),
-        disabled=["Student", "Phonics"],
-        hide_index=True,
-        use_container_width=True,
-        num_rows="fixed",
+        pd.DataFrame(rows), column_config=config,
+        disabled=["#", "Student", "Phonics"], hide_index=True,
+        use_container_width=True, num_rows="fixed",
         key=f"grid_{class_options[class_name]}_{checkin_date.isoformat()}",
     )
 
     if st.button("Save class check-in", type="primary"):
-        payload = []
-        for s, new in zip(students, edited.to_dict("records")):
-            values = {
-                LABEL_TO_SKILL[label]: RATING_TO_INT.get(new[label])
-                for label in SKILL_LABELS
-            }
-            notes = (new["Notes"] or "").strip() or None
-            # A row nobody touched is a student who wasn't assessed today,
-            # not a student who scored zero -- skip rather than store blanks.
-            if not any(v for v in values.values()) and not notes:
+        saved = away = 0
+        for s, new_row in zip(students, edited.to_dict("records")):
+            absent = bool(new_row["Away"])
+            scores = {}
+            for c in criteria:
+                v = new_row[c["short_label"]]
+                if not pd.isna(v):
+                    scores[c["id"]] = int(v)
+            notes = (new_row["Notes"] or "").strip() or None
+            # A row nobody touched is a child not assessed today, not a child
+            # who scored nothing -- skip rather than store an empty check-in.
+            if not absent and not scores and not notes:
                 continue
-            payload.append(
-                {
-                    "student_id": s["id"],
-                    "checkin_date": checkin_date.isoformat(),
-                    "notes": notes,
-                    **values,
-                }
-            )
-        if payload:
-            backend.insert_checkins(payload)
-            st.success(f"Check-ins saved for {len(payload)} student(s).")
+            backend.save_checkin(s["id"], checkin_date, scores,
+                                 absent=absent, notes=notes)
+            saved += 1
+            away += 1 if absent else 0
+        if saved:
+            st.success(f"Saved {saved} check-in(s)" + (f", {away} away." if away else "."))
             st.rerun()
         else:
             st.warning("Nothing to save — every row was empty.")
+
+
+def render_criteria(backend, read_only: bool = False):
+    st.subheader("Check-in criteria")
+    st.caption(
+        "What you score each lesson. Rename them, reorder them, hide one you "
+        "stopped using, or add your own — the check-in grid, the phonics test "
+        "screen and the parent page all follow this list."
+    )
+    criteria = backend.list_criteria(include_inactive=True)
+    rows = [
+        {
+            "Order": c["order_index"],
+            "Name": c["name_en"],
+            "Vietnamese": c["name_vi"],
+            "Short": c["short_label"],
+            "What it means": c.get("description_en") or "",
+            "In use": bool(c["active"]),
+            "Parents see": bool(c["parent_visible"]),
+        }
+        for c in criteria
+    ]
+    edited = st.data_editor(
+        pd.DataFrame(rows),
+        column_config={
+            "Order": st.column_config.NumberColumn("Order", min_value=1, step=1,
+                                                   width="small"),
+            "Name": st.column_config.TextColumn("Name", required=True),
+            "Vietnamese": st.column_config.TextColumn(
+                "Vietnamese", help="What parents see on their page."),
+            "Short": st.column_config.TextColumn(
+                "Short", width="small", help="Column header in the check-in grid."),
+            "What it means": st.column_config.TextColumn("What it means"),
+            "In use": st.column_config.CheckboxColumn(
+                "In use", help="Untick to stop scoring it. Past scores are kept."),
+            "Parents see": st.column_config.CheckboxColumn("Parents see"),
+        },
+        hide_index=True, use_container_width=True, num_rows="fixed",
+        disabled=read_only, key="criteria_editor",
+    )
+
+    if read_only:
+        return
+
+    if st.button("Save criteria", type="primary"):
+        changed = 0
+        for original, new_row in zip(criteria, edited.to_dict("records")):
+            fields = {}
+            for col, field in (("Name", "name_en"), ("Vietnamese", "name_vi"),
+                               ("Short", "short_label"),
+                               ("What it means", "description_en")):
+                value = (new_row[col] or "").strip() or None
+                if value != (original.get(field) or None):
+                    fields[field] = value
+            if int(new_row["Order"]) != original["order_index"]:
+                fields["order_index"] = int(new_row["Order"])
+            for col, field in (("In use", "active"), ("Parents see", "parent_visible")):
+                if bool(new_row[col]) != bool(original[field]):
+                    fields[field] = bool(new_row[col])
+            if fields:
+                backend.update_criterion(original["id"], fields)
+                changed += 1
+        st.success(f"Saved {changed} change(s).") if changed else st.info("Nothing changed.")
+        if changed:
+            st.rerun()
+
+    with st.expander("Add a criterion"):
+        with st.form("new_criterion", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            name = c1.text_input("Name")
+            name_vi = c2.text_input("Vietnamese (shown to parents)")
+            c3, c4 = st.columns([1, 3])
+            short = c3.text_input("Short label")
+            desc = c4.text_input("What it means")
+            if st.form_submit_button("Add") and name.strip():
+                backend.add_criterion({
+                    "code": name.strip().lower().replace(" ", "_")[:40],
+                    "name_en": name.strip(),
+                    "name_vi": (name_vi.strip() or name.strip()),
+                    "short_label": (short.strip() or name.strip()[:6]),
+                    "description_en": desc.strip() or None,
+                    "order_index": max([c["order_index"] for c in criteria] or [0]) + 1,
+                })
+                st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -626,20 +778,28 @@ def render_progress(backend, read_only: bool = False):
 
     with right:
         st.markdown("**Check-in history**")
-        checkins = backend.list_checkins(student["id"], limit=10)
+        criteria = backend.list_criteria(include_inactive=True)
+        checkins = backend.list_student_checkins(student["id"], limit=10)
         if not checkins:
             st.caption("No check-ins recorded yet.")
         else:
-            hist = pd.DataFrame(
-                [
-                    {"Date": fmt_date(c["checkin_date"]),
-                     **{short: c.get(field) for field, short, _n, _d in SKILL_CRITERIA},
-                     "Notes": c.get("notes") or ""}
-                    for c in checkins
-                ]
-            )
-            st.dataframe(hist, hide_index=True, use_container_width=True)
-            st.caption("1 Not yet · 2 Emerging · 3 Developing · 4 Secure")
+            by_id = {c["id"]: c["short_label"] for c in criteria}
+            hist = []
+            for c in checkins:
+                row = {"Date": fmt_date(c["checkin_date"])}
+                if c.get("absent"):
+                    row.update({s: None for s in by_id.values()})
+                    row["Notes"] = "Away"
+                else:
+                    scores = c.get("scores") or {
+                        s["criterion_id"]: s["score"]
+                        for s in (c.get("checkin_scores") or [])
+                    }
+                    row.update({by_id[k]: v for k, v in scores.items() if k in by_id})
+                    row["Notes"] = c.get("notes") or ""
+                hist.append(row)
+            st.dataframe(pd.DataFrame(hist), hide_index=True, use_container_width=True)
+            st.caption("Scores are out of 10. A blank means not scored that lesson.")
 
     if not read_only:
         st.divider()
@@ -884,6 +1044,128 @@ def render_students(backend, read_only: bool = False):
             st.rerun()
 
 
+def radar_svg(labels: list, values: list, accent: str, ink: str,
+              fill: str = None) -> str:
+    """The skill web, hand-drawn.
+
+    Drawn as SVG rather than pulled from a charting library: it has to match
+    the theme in both light and dark, and every extra dependency is another
+    thing that can break on an upgrade. The viewBox is deliberately wider
+    than it is tall -- Vietnamese criterion names are long, and the side
+    labels were being cut off by a square one.
+    """
+    import math
+    import textwrap
+
+    n = len(labels)
+    if n < 3:
+        return ""
+    w, h, cx, cy, r = 420, 330, 210, 150, 92
+
+    def point(i, value):
+        angle = -math.pi / 2 + (2 * math.pi * i / n)
+        d = r * (value / SCORE_MAX)
+        return cx + d * math.cos(angle), cy + d * math.sin(angle)
+
+    rings = "".join(
+        '<polygon points="{}" fill="none" stroke="{}" stroke-width="1" opacity=".3"/>'.format(
+            " ".join(f"{x:.1f},{y:.1f}" for x, y in
+                     (point(i, SCORE_MAX * f) for i in range(n))), ink)
+        for f in (0.25, 0.5, 0.75, 1.0)
+    )
+    spokes = "".join(
+        '<line x1="{:.1f}" y1="{:.1f}" x2="{:.1f}" y2="{:.1f}" stroke="{}" '
+        'stroke-width="1" opacity=".25"/>'.format(cx, cy, *point(i, SCORE_MAX), ink)
+        for i in range(n)
+    )
+    pts = [point(i, v or 0) for i, v in enumerate(values)]
+    shape = (
+        '<polygon points="{}" fill="{}" fill-opacity=".75" stroke="{}" '
+        'stroke-width="2.5" stroke-linejoin="round"/>'.format(
+            " ".join(f"{x:.1f},{y:.1f}" for x, y in pts), fill or accent, accent)
+    )
+    dots = "".join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3.5" fill="{accent}"/>'
+                   for x, y in pts)
+    names = ""
+    for i, label in enumerate(labels):
+        x, y = point(i, SCORE_MAX * 1.24)
+        anchor = "middle" if abs(x - cx) < 20 else ("start" if x > cx else "end")
+        lines = textwrap.wrap(label, 11) or [label]
+        y -= (len(lines) - 1) * 6
+        spans = "".join(
+            f'<tspan x="{x:.1f}" dy="{0 if j == 0 else 13}">{line}</tspan>'
+            for j, line in enumerate(lines))
+        names += (f'<text x="{x:.1f}" y="{y:.1f}" text-anchor="{anchor}" '
+                  f'dominant-baseline="middle" font-size="12" font-weight="600" '
+                  f'fill="{ink}">{spans}</text>')
+    return (f'<svg viewBox="0 0 {w} {h}" width="100%" '
+            f'style="max-width:420px;display:block;margin:0 auto" '
+            f'role="img">{rings}{spokes}{shape}{dots}{names}</svg>')
+
+
+def trend_svg(points: list, accent: str, ink: str, muted: str) -> str:
+    """Average per lesson over time. Absences are simply not in `points`, so
+    the line shows a gap rather than dropping to zero."""
+    if len(points) < 2:
+        return ""
+    w, h, pad_l, pad_b, pad_t = 340, 180, 26, 26, 12
+    xs = [pad_l + (w - pad_l - 8) * i / (len(points) - 1) for i in range(len(points))]
+    ys = [h - pad_b - (h - pad_b - pad_t) * ((p["average"] - 1) / (SCORE_MAX - 1))
+          for p in points]
+    grid = "".join(
+        '<line x1="{}" y1="{:.1f}" x2="{}" y2="{:.1f}" stroke="{}" stroke-width="1" '
+        'opacity=".25"/><text x="4" y="{:.1f}" font-size="10" fill="{}">{}</text>'.format(
+            pad_l, y, w - 8, y, ink, y + 3, muted, v)
+        for v, y in ((v, h - pad_b - (h - pad_b - pad_t) * ((v - 1) / (SCORE_MAX - 1)))
+                     for v in (2, 6, 10))
+    )
+    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in zip(xs, ys))
+    area = f"{pad_l},{h - pad_b} " + line + f" {xs[-1]:.1f},{h - pad_b}"
+    dots = "".join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3.5" fill="{accent}"/>'
+                   for x, y in zip(xs, ys))
+    last = (f'<circle cx="{xs[-1]:.1f}" cy="{ys[-1]:.1f}" r="6" fill="none" '
+            f'stroke="{accent}" stroke-width="2.5"/>')
+    ends = (f'<text x="{pad_l}" y="{h - 8}" font-size="10" fill="{muted}">'
+            f'{fmt_date(points[0]["date"])}</text>'
+            f'<text x="{w - 8}" y="{h - 8}" font-size="10" fill="{muted}" '
+            f'text-anchor="end">{fmt_date(points[-1]["date"])}</text>')
+    return (f'<svg viewBox="0 0 {w} {h}" width="100%" style="display:block" role="img">'
+            f'{grid}<polygon points="{area}" fill="{accent}" fill-opacity=".18"/>'
+            f'<polyline points="{line}" fill="none" stroke="{accent}" stroke-width="2.5" '
+            f'stroke-linejoin="round" stroke-linecap="round"/>{dots}{last}{ends}</svg>')
+
+
+def lesson_streak(points: list, threshold: int = 8) -> int:
+    """Consecutive attended lessons averaging at or above the threshold,
+    counting back from the most recent."""
+    run = 0
+    for p in reversed(points):
+        if (p["average"] or 0) >= threshold:
+            run += 1
+        else:
+            break
+    return run
+
+
+def lesson_medals(points: list, radar: dict, criteria: list) -> list:
+    """Earned from the data, never awarded by hand."""
+    out = []
+    if lesson_streak(points) >= 4:
+        out.append(("🔥", SHEET["medal_streak"]))
+    if points and (points[-1]["average"] or 0) >= 9:
+        out.append(("🌟", SHEET["medal_great"]))
+    if len(points) >= 3:
+        first = sum(p["average"] for p in points[:2]) / 2
+        last = sum(p["average"] for p in points[-2:]) / 2
+        if last - first >= 1.5:
+            out.append(("📈", SHEET["medal_improved"]))
+    if radar and len(radar) >= 3 and all(v >= 8 for v in radar.values()):
+        out.append(("🎯", SHEET["medal_allround"]))
+    if len(points) >= 8:
+        out.append(("💪", SHEET["medal_regular"]))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Parent sheet (no login, ?token=...)
 #
@@ -934,21 +1216,21 @@ SHEET = {
         "practising": "Gần thuộc",
         "not_yet": "Chưa thuộc",
     },
-    # The six check-in criteria, parent wording.
-    "skills": {
-        "blending_rating": "Ghép âm",
-        "segmenting_rating": "Tách âm",
-        "letter_formation_rating": "Viết chữ",
-        "pencil_grip_rating": "Cầm bút",
-        "tricky_words_rating": "Từ khó",
-        "participation_rating": "Tham gia trên lớp",
-    },
-    "scale": {
-        1: "1 · Chưa làm được",
-        2: "2 · Bắt đầu",
-        3: "3 · Đang tiến bộ",
-        4: "4 · Vững",
-    },
+    # Skill web / trend / medals
+    "web": "Cân bằng kỹ năng",
+    "trend": "Xu hướng học tập",
+    "trend_help": "Điểm trung bình mỗi buổi học (trên 10).",
+    "medals": "Huy hiệu",
+    "streak": "🔥 Chuỗi {n} buổi học xuất sắc",
+    "no_streak": "Hãy cố gắng để bắt đầu chuỗi buổi học xuất sắc nhé!",
+    "medal_streak": "Chuỗi 4 buổi chuyên cần",
+    "medal_great": "Buổi học xuất sắc",
+    "medal_improved": "Tiến bộ vượt bậc",
+    "medal_allround": "Học sinh toàn diện",
+    "medal_regular": "Người bền bỉ",
+    "absent": "Buổi này con vắng mặt.",
+    "score_of": "{score}/10",
+    "not_scored": "—",
 }
 
 
@@ -1031,21 +1313,67 @@ def render_parent_sheet(token: str):
                 )
             )
 
+    # --- lesson scores: web, trend, medals --------------------------------
+    criteria = data.get("criteria") or []
+    radar = data.get("radar") or {}
+    trend = data.get("trend") or []
+    palette = theme.THEMES[ACTIVE_THEME]
+    accent = palette.get("accent_edge", palette["accent"])
+    ink, muted = palette["ink"], palette["muted"]
+
+    if radar and len(criteria) >= 3:
+        st.markdown(f"### {SHEET['web']}")
+        labels = [c["name_vi"] for c in criteria if c["code"] in radar]
+        values = [float(radar[c["code"]]) for c in criteria if c["code"] in radar]
+        st.markdown(
+            radar_svg(labels, values, accent, ink,
+                      fill=palette.get("accent_fill", accent)),
+            unsafe_allow_html=True)
+
+    if len(trend) >= 2:
+        st.markdown(f"### {SHEET['trend']}")
+        st.caption(SHEET["trend_help"])
+        st.markdown(trend_svg([{"date": p["date"], "average": float(p["average"])}
+                               for p in trend], accent, ink, muted),
+                    unsafe_allow_html=True)
+
+    if trend:
+        streak = lesson_streak([{"average": float(p["average"])} for p in trend])
+        st.markdown(
+            f"<div class='badge' style='background:{palette['status']['acquired']['bg']};"
+            f"color:{palette['status']['acquired']['fg']};"
+            f"border:1.5px solid {palette['status']['acquired'].get('edge', accent)}'>"
+            + (SHEET["streak"].format(n=streak) if streak else SHEET["no_streak"])
+            + "</div>", unsafe_allow_html=True)
+
+    medals = lesson_medals([{"average": float(p["average"])} for p in trend],
+                           {k: float(v) for k, v in radar.items()}, criteria)
+    if medals:
+        st.markdown(f"### {SHEET['medals']}")
+        st.markdown(
+            "<div class='practise-row'>" + "".join(
+                f"<div class='practise-card'><div class='g'>{emoji}</div>"
+                f"<div class='w'>{name}</div></div>" for emoji, name in medals
+            ) + "</div>", unsafe_allow_html=True)
+
     last = data.get("last_checkin")
     if last:
         st.markdown(f"### {SHEET['checkin']}")
         st.caption(fmt_date(last.get("checkin_date")))
-        cols = st.columns(3)
-        for i, (field, _short, _name, _desc) in enumerate(SKILL_CRITERIA):
-            value = last.get(field)
-            name = SHEET["skills"][field]
-            cols[i % 3].markdown(
-                f"**{name}** — {SHEET['scale'].get(value, '—')}" if value
-                else f"{name} — —"
-            )
+        if last.get("absent"):
+            st.info(SHEET["absent"])
+        else:
+            scores = last.get("scores") or {}
+            cols = st.columns(3)
+            for i, c in enumerate(criteria):
+                value = scores.get(c["code"])
+                cols[i % 3].markdown(
+                    f"**{c['name_vi']}** — "
+                    + (SHEET["score_of"].format(score=value) if value
+                       else SHEET["not_scored"])
+                )
         if last.get("notes"):
             st.info(last["notes"])
-
 
 # ---------------------------------------------------------------------------
 # Auth + shell
@@ -1121,9 +1449,9 @@ def render_teacher_app():
             st.rerun()
         st.divider()
         sections = ["Phonics test", "Class check-in", "Student progress",
-                    "Students", "Classes"]
+                    "Students", "Classes", "Criteria"]
         if read_only:
-            sections = ["Student progress", "Students", "Classes"]
+            sections = ["Student progress", "Students", "Classes", "Criteria"]
         page = st.radio("Section", sections)
 
     render_hero("Phonics Progress", "Read-only view" if read_only else None,
@@ -1139,6 +1467,8 @@ def render_teacher_app():
         render_students(backend, read_only)
     elif page == "Classes":
         render_classes(backend, read_only)
+    elif page == "Criteria":
+        render_criteria(backend, read_only)
 
 
 # ---------------------------------------------------------------------------

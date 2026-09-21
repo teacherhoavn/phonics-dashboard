@@ -46,11 +46,18 @@ create table if not exists test_sessions (
 create table if not exists test_results (
   id text primary key, session_id text not null, sound_id text not null,
   status text not null, unique (session_id, sound_id));
-create table if not exists skill_checkins (
+create table if not exists checkin_criteria (
+  id text primary key, code text not null unique, name_en text not null,
+  name_vi text not null, short_label text not null, description_en text,
+  order_index int not null, active int not null default 1,
+  parent_visible int not null default 1);
+create table if not exists checkins (
   id text primary key, student_id text not null, checkin_date text not null,
-  blending_rating int, segmenting_rating int, letter_formation_rating int,
-  pencil_grip_rating int, tricky_words_rating int, participation_rating int,
-  notes text, created_at text default (datetime('now')));
+  absent int not null default 0, notes text,
+  created_at text default (datetime('now')), unique (student_id, checkin_date));
+create table if not exists checkin_scores (
+  checkin_id text not null, criterion_id text not null, score int not null,
+  primary key (checkin_id, criterion_id));
 """
 
 
@@ -86,6 +93,7 @@ class SqliteBackend:
         self.conn.executescript(SCHEMA)
         self._add_missing_columns()
         self._seed_reference()
+        self._seed_criteria()
         self._seed_demo_roster()
         self.conn.commit()
 
@@ -138,6 +146,31 @@ class SqliteBackend:
                 (_uid(), gid_by_num[gnum], code, grapheme, label, example, action, order),
             )
 
+    DEFAULT_CRITERIA = [
+        ("participation", "Participation", "Tham gia", "Part.",
+         "Joins in, answers, tries without being asked"),
+        ("behaviour", "Behaviour", "Ý thức trong lớp", "Behav.",
+         "Listens, follows instructions, works well with others"),
+        ("homework", "Homework", "Bài tập về nhà", "H/W",
+         "Homework done, and done with care"),
+        ("pronunciation", "Pronunciation", "Phát âm", "Pron.",
+         "Says the sounds clearly and accurately"),
+        ("correct_use", "Correct use", "Dùng đúng", "Use",
+         "Uses the right English in the right situation"),
+        ("vocabulary", "Vocabulary", "Từ vựng", "Vocab",
+         "Knows and uses the words taught"),
+    ]
+
+    def _seed_criteria(self):
+        for i, (code, en, vi, short, desc) in enumerate(self.DEFAULT_CRITERIA, 1):
+            self.conn.execute(
+                "insert into checkin_criteria (id, code, name_en, name_vi,"
+                " short_label, description_en, order_index) values (?,?,?,?,?,?,?)"
+                " on conflict(code) do update set name_en=excluded.name_en,"
+                " name_vi=excluded.name_vi, short_label=excluded.short_label",
+                (_uid(), code, en, vi, short, desc, i),
+            )
+
     def _seed_demo_roster(self):
         """A small fake class, so the screens have something to show."""
         if self.conn.execute("select count(*) c from classes").fetchone()["c"]:
@@ -188,15 +221,17 @@ class SqliteBackend:
                         " values (?,?,?,?)",
                         (_uid(), sess, snd["id"], status),
                     )
-            self.conn.execute(
-                "insert into skill_checkins (id, student_id, checkin_date,"
-                " blending_rating, segmenting_rating, letter_formation_rating,"
-                " pencil_grip_rating, tricky_words_rating, participation_rating)"
-                " values (?,?,?,?,?,?,?,?,?)",
-                (_uid(), sid, (date.today() - timedelta(days=7)).isoformat(),
-                 min(4, working_on + 1), working_on, min(4, working_on + 1),
-                 3, working_on, 4),
-            )
+            for offset, factor in ((17, 0), (3, 1)):
+                cid = _uid()
+                self.conn.execute(
+                    "insert into checkins (id, student_id, checkin_date) values (?,?,?)",
+                    (cid, sid, (date.today() - timedelta(days=offset)).isoformat()))
+                for n, row in enumerate(self.conn.execute(
+                        "select id from checkin_criteria order by order_index").fetchall()):
+                    self.conn.execute(
+                        "insert into checkin_scores (checkin_id, criterion_id, score)"
+                        " values (?,?,?)",
+                        (cid, row["id"], min(10, 4 + working_on + factor + (n % 3))))
 
     # -- helpers -----------------------------------------------------------
 
@@ -402,54 +437,98 @@ class SqliteBackend:
                 })
         return out
 
-    # -- class check-ins ---------------------------------------------------
+    # -- lesson check-ins --------------------------------------------------
+
+    def list_criteria(self, include_inactive: bool = False) -> list:
+        sql = "select * from checkin_criteria"
+        if not include_inactive:
+            sql += " where active=1"
+        rows = self._rows(sql + " order by order_index")
+        for r in rows:
+            r["active"] = bool(r["active"])
+            r["parent_visible"] = bool(r["parent_visible"])
+        return rows
+
+    def add_criterion(self, fields: dict):
+        cols = list(fields)
+        self.conn.execute(
+            f"insert into checkin_criteria (id, {', '.join(cols)})"
+            f" values (?{', ?' * len(cols)})",
+            (_uid(), *[fields[c] for c in cols]))
+        self.conn.commit()
+
+    def update_criterion(self, criterion_id, fields: dict):
+        if not fields:
+            return
+        sets = ", ".join(f"{k}=?" for k in fields)
+        self.conn.execute(f"update checkin_criteria set {sets} where id=?",
+                          (*fields.values(), criterion_id))
+        self.conn.commit()
+
+    def save_checkin(self, student_id, on_date, scores: dict,
+                     absent: bool = False, notes: str = None):
+        row = self.conn.execute(
+            "select id from checkins where student_id=? and checkin_date=?",
+            (student_id, on_date.isoformat())).fetchone()
+        cid = row["id"] if row else _uid()
+        if row:
+            self.conn.execute(
+                "update checkins set absent=?, notes=? where id=?",
+                (int(absent), (notes or "").strip() or None, cid))
+        else:
+            self.conn.execute(
+                "insert into checkins (id, student_id, checkin_date, absent, notes)"
+                " values (?,?,?,?,?)",
+                (cid, student_id, on_date.isoformat(), int(absent),
+                 (notes or "").strip() or None))
+        self.conn.execute("delete from checkin_scores where checkin_id=?", (cid,))
+        if not absent:
+            for crit, value in (scores or {}).items():
+                if value:
+                    self.conn.execute(
+                        "insert into checkin_scores (checkin_id, criterion_id, score)"
+                        " values (?,?,?)", (cid, crit, int(value)))
+        self.conn.commit()
+        return cid
+
+    def _scores_for(self, checkin_id) -> dict:
+        return {r["criterion_id"]: r["score"] for r in self.conn.execute(
+            "select criterion_id, score from checkin_scores where checkin_id=?",
+            (checkin_id,))}
+
+    def checkins_on(self, student_ids: list, on_date) -> dict:
+        if not student_ids:
+            return {}
+        marks = ",".join("?" * len(student_ids))
+        out = {}
+        for r in self._rows(
+                f"select * from checkins where student_id in ({marks})"
+                " and checkin_date=?", (*student_ids, on_date.isoformat())):
+            out[r["student_id"]] = {"absent": bool(r["absent"]), "notes": r["notes"],
+                                    "scores": self._scores_for(r["id"])}
+        return out
 
     def latest_checkins(self, student_ids: list) -> dict:
         if not student_ids:
             return {}
         marks = ",".join("?" * len(student_ids))
-        rows = self._rows(
-            f"select * from skill_checkins where student_id in ({marks})"
-            " order by checkin_date desc, created_at desc",
-            student_ids,
-        )
         latest = {}
-        for r in rows:
-            latest.setdefault(r["student_id"], r)
+        for r in self._rows(
+                f"select * from checkins where student_id in ({marks})"
+                " order by checkin_date desc", student_ids):
+            latest.setdefault(r["student_id"], {
+                "checkin_date": r["checkin_date"], "absent": bool(r["absent"]),
+                "scores": self._scores_for(r["id"])})
         return latest
 
-    def insert_checkins(self, rows: list):
+    def list_student_checkins(self, student_id, limit: int = 20) -> list:
+        rows = self._rows(
+            "select * from checkins where student_id=?"
+            " order by checkin_date desc limit ?", (student_id, limit))
         for r in rows:
-            cols = ["student_id", "checkin_date", "notes"] + [
-                k for k in r if k.endswith("_rating")
-            ]
-            vals = [r.get(c) for c in cols]
-            self.conn.execute(
-                f"insert into skill_checkins (id, {', '.join(cols)})"
-                f" values (?{', ?' * len(cols)})",
-                (_uid(), *vals),
-            )
-        self.conn.commit()
-
-    def list_checkins(self, student_id, limit=20) -> list:
-        return self._rows(
-            "select * from skill_checkins where student_id=?"
-            " order by checkin_date desc, created_at desc limit ?",
-            (student_id, limit),
-        )
-
-    def update_checkin(self, checkin_id, fields: dict):
-        if not fields:
-            return
-        sets = ", ".join(f"{k}=?" for k in fields)
-        self.conn.execute(
-            f"update skill_checkins set {sets} where id=?", (*fields.values(), checkin_id)
-        )
-        self.conn.commit()
-
-    def delete_checkin(self, checkin_id):
-        self.conn.execute("delete from skill_checkins where id=?", (checkin_id,))
-        self.conn.commit()
+            r["absent"] = bool(r["absent"])
+            r["scores"] = self._scores_for(r["id"])
+        return rows
 
     # -- auth (no-op: demo mode has no accounts) ---------------------------
 
@@ -502,7 +581,38 @@ class SqliteBackend:
             " where t.student_id=? order by t.tested_on desc, t.created_at desc limit 10",
             (sid,),
         )
-        checkins = self.list_checkins(sid, limit=1)
+        criteria = [c for c in self.list_criteria() if c["parent_visible"]]
+        recent = self.list_student_checkins(sid, limit=12)
+        attended = [c for c in recent if not c["absent"] and c["scores"]]
+
+        # Radar: each criterion averaged over the last four attended lessons.
+        last_four = attended[:4]
+        radar = {}
+        for c in criteria:
+            vals = [x["scores"][c["id"]] for x in last_four if c["id"] in x["scores"]]
+            if vals:
+                radar[c["code"]] = round(sum(vals) / len(vals), 2)
+
+        # Trend: one point per attended lesson, oldest first. Absences are
+        # simply absent, so the line gaps rather than dropping to zero.
+        trend = [
+            {"date": x["checkin_date"],
+             "average": round(sum(x["scores"].values()) / len(x["scores"]), 2)}
+            for x in reversed(attended)
+        ]
+
+        last = recent[0] if recent else None
+        last_checkin = None
+        if last:
+            by_id = {c["id"]: c["code"] for c in criteria}
+            last_checkin = {
+                "checkin_date": last["checkin_date"],
+                "absent": last["absent"],
+                "notes": last["notes"],
+                "scores": {by_id[k]: v for k, v in last["scores"].items()
+                           if k in by_id},
+            }
+
         return {
             "timeline": timeline,
             "student": {
@@ -514,7 +624,10 @@ class SqliteBackend:
                 for p in sorted(progress, key=lambda p: p["group_number"])
             ],
             "practise": practise,
-            "last_checkin": checkins[0] if checkins else None,
+            "criteria": [{"code": c["code"], "name_vi": c["name_vi"]} for c in criteria],
+            "radar": radar,
+            "trend": trend,
+            "last_checkin": last_checkin,
         }
 
     def _current_map(self, student_ids):

@@ -113,34 +113,70 @@ create table if not exists test_results (
 
 create index if not exists test_results_session_idx on test_results(session_id);
 
--- ------------------------------------------------------------
--- Class check-in: the skills a letter-sound test cannot measure.
---
--- Deliberately does NOT include letter-sound recognition -- that is what
--- the group test measures, sound by sound. Re-rating it here would mean
--- entering the same judgement twice, so the check-in grid shows the tested
--- progress as a read-only column instead.
---
--- Scale is 1-4 (1 Not yet, 2 Emerging, 3 Developing, 4 Secure). Four
--- points, not five: for beginners the middle of a 5-point scale is noise,
--- and fewer options means a faster grid.
--- ------------------------------------------------------------
+create table if not exists checkin_criteria (
+  id uuid primary key default gen_random_uuid(),
+  code text not null unique,
+  name_en text not null,
+  name_vi text not null,
+  short_label text not null,
+  description_en text,
+  order_index int not null,
+  active boolean not null default true,
+  parent_visible boolean not null default true
+);
 
-create table if not exists skill_checkins (
+create table if not exists checkins (
   id uuid primary key default gen_random_uuid(),
   student_id uuid not null references students(id) on delete cascade,
   checkin_date date not null default current_date,
-  blending_rating int check (blending_rating between 1 and 4),
-  segmenting_rating int check (segmenting_rating between 1 and 4),
-  letter_formation_rating int check (letter_formation_rating between 1 and 4),
-  pencil_grip_rating int check (pencil_grip_rating between 1 and 4),
-  tricky_words_rating int check (tricky_words_rating between 1 and 4),
-  participation_rating int check (participation_rating between 1 and 4),
+  absent boolean not null default false,
   notes text,
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique (student_id, checkin_date)
 );
 
-create index if not exists skill_checkins_student_idx on skill_checkins(student_id, checkin_date desc);
+create index if not exists checkins_student_idx on checkins(student_id, checkin_date desc);
+
+create table if not exists checkin_scores (
+  checkin_id uuid not null references checkins(id) on delete cascade,
+  criterion_id uuid not null references checkin_criteria(id) on delete cascade,
+  score int not null check (score between 1 and 10),
+  primary key (checkin_id, criterion_id)
+);
+
+insert into checkin_criteria
+  (code, name_en, name_vi, short_label, description_en, order_index) values
+  ('participation','Participation','Tham gia','Part.',
+   'Joins in, answers, tries without being asked',1),
+  ('behaviour','Behaviour','Ý thức trong lớp','Behav.',
+   'Listens, follows instructions, works well with others',2),
+  ('homework','Homework','Bài tập về nhà','H/W',
+   'Homework done, and done with care',3),
+  ('pronunciation','Pronunciation','Phát âm','Pron.',
+   'Says the sounds clearly and accurately',4),
+  ('correct_use','Correct use','Dùng đúng','Use',
+   'Uses the right English in the right situation',5),
+  ('vocabulary','Vocabulary','Từ vựng','Vocab',
+   'Knows and uses the words taught',6)
+on conflict (code) do update set
+  name_en = excluded.name_en, name_vi = excluded.name_vi,
+  short_label = excluded.short_label,
+  description_en = excluded.description_en;
+
+-- One lesson, one average: the mean of the criteria actually scored.
+-- Absent lessons produce no row at all, so a trend line shows a gap
+-- rather than a dip.
+create or replace view checkin_averages
+with (security_invoker = on) as
+select c.id as checkin_id, c.student_id, c.checkin_date,
+       round(avg(s.score)::numeric, 2) as average,
+       count(s.score) as scored
+from checkins c
+join checkin_scores s on s.checkin_id = c.id
+where c.absent = false
+group by c.id, c.student_id, c.checkin_date;
+
 
 -- ------------------------------------------------------------
 -- Derived views
