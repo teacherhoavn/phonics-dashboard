@@ -105,11 +105,12 @@ class SupabaseBackend:
         return q.execute().data
 
     def add_student(self, class_id: str, name: str, parent_contact: str = None,
-                    photo_b64: str = None):
+                    photo_b64: str = None, parent_name: str = None):
         self.client.table("students").insert(
             {
                 "class_id": class_id,
                 "name": name,
+                "parent_name": parent_name or None,
                 "parent_contact": parent_contact or None,
                 "photo_b64": photo_b64,
             }

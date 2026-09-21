@@ -25,6 +25,10 @@ create table if not exists students (
   id uuid primary key default gen_random_uuid(),
   class_id uuid references classes(id),
   name text not null,
+  -- Parent's name and phone kept apart: her register has them as separate
+  -- columns, and a combined field makes names unsearchable and numbers
+  -- awkward to call from a phone.
+  parent_name text,
   parent_contact text,
   -- Small base64 JPEG in the row itself, so a headshot is reachable only
   -- through the same paths as the rest of the student data.

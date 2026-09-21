@@ -30,7 +30,8 @@ create table if not exists classes (
   id text primary key, name text not null, level text,
   archived int not null default 0, created_at text default (datetime('now')));
 create table if not exists students (
-  id text primary key, class_id text, name text not null, parent_contact text,
+  id text primary key, class_id text, name text not null,
+  parent_name text, parent_contact text,
   photo_b64 text, access_token text unique not null,
   archived int not null default 0, created_at text default (datetime('now')));
 create table if not exists phonics_groups (
@@ -241,11 +242,13 @@ class SqliteBackend:
             r["classes"] = {"id": cid, "name": cname} if cid else None
         return rows
 
-    def add_student(self, class_id, name, parent_contact=None, photo_b64=None):
+    def add_student(self, class_id, name, parent_contact=None, photo_b64=None,
+                    parent_name=None):
         self.conn.execute(
-            "insert into students (id, class_id, name, parent_contact, photo_b64,"
-            " access_token) values (?,?,?,?,?,?)",
-            (_uid(), class_id, name, parent_contact or None, photo_b64, uuid.uuid4().hex),
+            "insert into students (id, class_id, name, parent_name, parent_contact,"
+            " photo_b64, access_token) values (?,?,?,?,?,?,?)",
+            (_uid(), class_id, name, parent_name or None, parent_contact or None,
+             photo_b64, uuid.uuid4().hex),
         )
         self.conn.commit()
 

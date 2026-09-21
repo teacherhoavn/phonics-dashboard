@@ -730,16 +730,19 @@ def render_students(backend, read_only: bool = False):
 
     if not read_only:
         with st.form("new_student", clear_on_submit=True):
-            c1, c2, c3 = st.columns(3)
+            c1, c2 = st.columns(2)
             class_name = c1.selectbox("Class", class_names)
             name = c2.text_input("Student name")
-            contact = c3.text_input("Parent contact (optional)")
+            c3, c4 = st.columns(2)
+            parent_name = c3.text_input("Parent name (optional)")
+            contact = c4.text_input("Phone (optional)")
             photo = st.file_uploader("Photo (optional headshot)",
                                      type=["jpg", "jpeg", "png", "webp"])
             if st.form_submit_button("Add student") and name.strip():
                 backend.add_student(
                     class_by_name[class_name], name.strip(), contact.strip() or None,
                     process_photo(photo) if photo else None,
+                    parent_name=parent_name.strip() or None,
                 )
                 st.rerun()
 
@@ -761,7 +764,8 @@ def render_students(backend, read_only: bool = False):
         {
             "Student": s["name"],
             "Class": name_by_id.get((s.get("classes") or {}).get("id"), class_names[0]),
-            "Parent contact": s.get("parent_contact") or "",
+            "Parent": s.get("parent_name") or "",
+            "Phone": s.get("parent_contact") or "",
             "Archived": bool(s["archived"]),
         }
         for s in students
@@ -776,7 +780,8 @@ def render_students(backend, read_only: bool = False):
         column_config={
             "Student": st.column_config.TextColumn("Student", required=True),
             "Class": st.column_config.SelectboxColumn("Class", options=class_names),
-            "Parent contact": st.column_config.TextColumn("Parent contact"),
+            "Parent": st.column_config.TextColumn("Parent"),
+            "Phone": st.column_config.TextColumn("Phone"),
             "Archived": st.column_config.CheckboxColumn("Archived"),
         },
         hide_index=False, use_container_width=True, num_rows="fixed",
@@ -790,7 +795,10 @@ def render_students(backend, read_only: bool = False):
             name = (new_row["Student"] or "").strip()
             if name and name != original["name"]:
                 fields["name"] = name
-            contact = (new_row["Parent contact"] or "").strip() or None
+            parent = (new_row["Parent"] or "").strip() or None
+            if parent != (original.get("parent_name") or None):
+                fields["parent_name"] = parent
+            contact = (new_row["Phone"] or "").strip() or None
             if contact != (original.get("parent_contact") or None):
                 fields["parent_contact"] = contact
             class_id = class_by_name.get(new_row["Class"])
