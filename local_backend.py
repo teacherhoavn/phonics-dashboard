@@ -31,7 +31,7 @@ create table if not exists classes (
   archived int not null default 0, created_at text default (datetime('now')));
 create table if not exists students (
   id text primary key, class_id text, name text not null,
-  parent_name text, parent_contact text,
+  parent_name text, parent_contact text, order_index int,
   photo_b64 text, access_token text unique not null,
   archived int not null default 0, created_at text default (datetime('now')));
 create table if not exists phonics_groups (
@@ -84,8 +84,24 @@ class SqliteBackend:
         self.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._add_missing_columns()
         self._seed_reference()
         self._seed_demo_roster()
+        self.conn.commit()
+
+    def _add_missing_columns(self):
+        """"create table if not exists" never adds a column to a file that
+        already exists, so a demo.db made before a schema change would crash
+        on the new fields. Add anything missing instead of asking whoever is
+        developing to delete their demo data."""
+        added = {
+            "students": {"parent_name": "text", "order_index": "int"},
+        }
+        for table, columns in added.items():
+            have = {r["name"] for r in self.conn.execute(f"pragma table_info({table})")}
+            for column, coltype in columns.items():
+                if column not in have:
+                    self.conn.execute(f"alter table {table} add column {column} {coltype}")
         self.conn.commit()
 
     # -- seeding -----------------------------------------------------------
@@ -142,11 +158,12 @@ class SqliteBackend:
             ("Binh (demo)", 1, 2),
             ("Chi (demo)", 0, 1),
         ]
-        for name, done_through, working_on in plan:
+        for position, (name, done_through, working_on) in enumerate(plan, 1):
             sid = _uid()
             self.conn.execute(
-                "insert into students (id, class_id, name, access_token) values (?,?,?,?)",
-                (sid, cid, name, uuid.uuid4().hex),
+                "insert into students (id, class_id, name, access_token, order_index)"
+                " values (?,?,?,?,?)",
+                (sid, cid, name, uuid.uuid4().hex, position),
             )
             for gnum in range(1, working_on + 1):
                 sounds = self.conn.execute(
@@ -234,21 +251,23 @@ class SqliteBackend:
             args.append(class_id)
         if not include_archived:
             sql += " and s.archived=0"
-        rows = self._rows(sql + " order by s.name", args)
+        rows = self._rows(sql, args)
         for r in rows:
             r["archived"] = bool(r["archived"])
             cid, cname = r.pop("_class_id"), r.pop("_class_name")
             # Mirrors supabase-py's embedded-resource shape: None when unassigned.
             r["classes"] = {"id": cid, "name": cname} if cid else None
-        return rows
+        from db import roster_order
+
+        return roster_order(rows)
 
     def add_student(self, class_id, name, parent_contact=None, photo_b64=None,
-                    parent_name=None):
+                    parent_name=None, order_index=None):
         self.conn.execute(
             "insert into students (id, class_id, name, parent_name, parent_contact,"
-            " photo_b64, access_token) values (?,?,?,?,?,?,?)",
+            " photo_b64, access_token, order_index) values (?,?,?,?,?,?,?,?)",
             (_uid(), class_id, name, parent_name or None, parent_contact or None,
-             photo_b64, uuid.uuid4().hex),
+             photo_b64, uuid.uuid4().hex, order_index),
         )
         self.conn.commit()
 

@@ -37,6 +37,10 @@ create table if not exists students (
   -- it is never guessable from anything the teacher types.
   access_token text unique not null default encode(gen_random_bytes(16), 'hex'),
   archived boolean not null default false,
+  -- Her paper register has a fixed numbered order, and matching it is what
+  -- lets her find a child mid-lesson. Null sorts last, so a newly added
+  -- student appears at the bottom rather than jumping into the middle.
+  order_index int,
   created_at timestamptz default now()
 );
 

@@ -739,10 +739,15 @@ def render_students(backend, read_only: bool = False):
             photo = st.file_uploader("Photo (optional headshot)",
                                      type=["jpg", "jpeg", "png", "webp"])
             if st.form_submit_button("Add student") and name.strip():
+                existing_order = [
+                    s.get("order_index") or 0
+                    for s in backend.list_students(include_archived=True)
+                ]
                 backend.add_student(
                     class_by_name[class_name], name.strip(), contact.strip() or None,
                     process_photo(photo) if photo else None,
                     parent_name=parent_name.strip() or None,
+                    order_index=(max(existing_order) if existing_order else 0) + 1,
                 )
                 st.rerun()
 
@@ -756,12 +761,14 @@ def render_students(backend, read_only: bool = False):
     st.caption(
         f"**{active} student(s)**"
         + (f" · {archived_n} archived" if archived_n else "")
-        + " — fix a spelling, move a child to another class, or archive one. "
-        "Edit in the grid and press Save; nothing is written until you do."
+        + " — in her register order. Change a **#** to move a child, fix a "
+        "spelling, or archive one. Edit in the grid and press Save; nothing is "
+        "written until you do."
     )
     name_by_id = {c["id"]: c["name"] for c in classes}
     rows = [
         {
+            "#": s.get("order_index"),
             "Student": s["name"],
             "Class": name_by_id.get((s.get("classes") or {}).get("id"), class_names[0]),
             "Parent": s.get("parent_name") or "",
@@ -770,21 +777,20 @@ def render_students(backend, read_only: bool = False):
         }
         for s in students
     ]
-    table = pd.DataFrame(rows)
-    # Number the rows from 1 so she can see at a glance how many children are
-    # in the class. It is the index, not a column, so it stays uneditable and
-    # cannot be mistaken for data.
-    table.index = range(1, len(table) + 1)
     edited = st.data_editor(
-        table,
+        pd.DataFrame(rows),
         column_config={
+            "#": st.column_config.NumberColumn(
+                "#", min_value=1, step=1, width="small",
+                help="Her register order. Change a number and press Save to move a child.",
+            ),
             "Student": st.column_config.TextColumn("Student", required=True),
             "Class": st.column_config.SelectboxColumn("Class", options=class_names),
             "Parent": st.column_config.TextColumn("Parent"),
             "Phone": st.column_config.TextColumn("Phone"),
             "Archived": st.column_config.CheckboxColumn("Archived"),
         },
-        hide_index=False, use_container_width=True, num_rows="fixed",
+        hide_index=True, use_container_width=True, num_rows="fixed",
         disabled=read_only, key="students_editor",
     )
 
@@ -795,6 +801,10 @@ def render_students(backend, read_only: bool = False):
             name = (new_row["Student"] or "").strip()
             if name and name != original["name"]:
                 fields["name"] = name
+            order = new_row["#"]
+            order = None if pd.isna(order) else int(order)
+            if order != original.get("order_index"):
+                fields["order_index"] = order
             parent = (new_row["Parent"] or "").strip() or None
             if parent != (original.get("parent_name") or None):
                 fields["parent_name"] = parent

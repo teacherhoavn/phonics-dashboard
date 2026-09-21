@@ -41,6 +41,14 @@ SUPABASE_KEY = get_setting("SUPABASE_KEY")
 DEMO_MODE = str(get_setting("PHONICS_DEMO") or "").strip() in ("1", "true", "yes")
 USE_SUPABASE = bool(SUPABASE_URL and SUPABASE_KEY) and not DEMO_MODE
 
+def roster_order(students: list) -> list:
+    """Her register order, with unnumbered students last and ties by name."""
+    return sorted(
+        students,
+        key=lambda s: (s.get("order_index") is None, s.get("order_index") or 0, s["name"]),
+    )
+
+
 CHECKIN_FIELDS = [
     "blending_rating",
     "segmenting_rating",
@@ -69,7 +77,7 @@ class SupabaseBackend:
         q = self.client.table("classes").select("*").order("created_at")
         if not include_archived:
             q = q.eq("archived", False)
-        return q.execute().data
+        return roster_order(q.execute().data)
 
     def add_class(self, name: str, level: str = None):
         self.client.table("classes").insert(
@@ -97,20 +105,22 @@ class SupabaseBackend:
         self.client.table("classes").delete().eq("id", class_id).execute()
 
     def list_students(self, class_id: str = None, include_archived: bool = False) -> list:
-        q = self.client.table("students").select("*, classes(id, name)").order("name")
+        q = self.client.table("students").select("*, classes(id, name)")
         if class_id:
             q = q.eq("class_id", class_id)
         if not include_archived:
             q = q.eq("archived", False)
-        return q.execute().data
+        return roster_order(q.execute().data)
 
     def add_student(self, class_id: str, name: str, parent_contact: str = None,
-                    photo_b64: str = None, parent_name: str = None):
+                    photo_b64: str = None, parent_name: str = None,
+                    order_index: int = None):
         self.client.table("students").insert(
             {
                 "class_id": class_id,
                 "name": name,
                 "parent_name": parent_name or None,
+                "order_index": order_index,
                 "parent_contact": parent_contact or None,
                 "photo_b64": photo_b64,
             }

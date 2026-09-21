@@ -89,6 +89,36 @@ def test_archived_students_still_block_deletion():
     raise AssertionError("archived students should still block deletion")
 
 
+def test_roster_order_puts_unnumbered_students_last():
+    from db import roster_order
+
+    rows = [
+        {"name": "Zoe", "order_index": 2},
+        {"name": "Adam", "order_index": None},
+        {"name": "Mai", "order_index": 1},
+        {"name": "Bao", "order_index": None},
+    ]
+    assert [s["name"] for s in roster_order(rows)] == ["Mai", "Zoe", "Adam", "Bao"]
+
+
+def test_new_students_sort_after_numbered_ones():
+    b, cls = fresh()
+    for i, s in enumerate(b.list_students(class_id=cls["id"]), 1):
+        b.update_student(s["id"], {"order_index": i})
+    b.add_student(cls["id"], "Nguyễn Bảo Ngọc", order_index=None)
+    assert b.list_students(class_id=cls["id"])[-1]["name"] == "Nguyễn Bảo Ngọc"
+
+
+def test_changing_a_number_reorders_the_register():
+    b, cls = fresh()
+    students = b.list_students(class_id=cls["id"])
+    for i, s in enumerate(students, 1):
+        b.update_student(s["id"], {"order_index": i})
+    last = students[-1]
+    b.update_student(last["id"], {"order_index": 0})
+    assert b.list_students(class_id=cls["id"])[0]["id"] == last["id"]
+
+
 if __name__ == "__main__":
     passed = 0
     for name, fn in sorted(globals().items()):
