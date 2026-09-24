@@ -1506,6 +1506,29 @@ def render_teacher_app():
         render_criteria(backend, read_only)
 
 
+def run_teacher_app():
+    """render_teacher_app(), with a readable message for a half-updated app.
+
+    A deploy can leave Streamlit running the new app.py against a db.py that
+    is still the copy loaded at start-up, so calls to newly added backend
+    methods raise AttributeError. Nothing in the page can repair that -- the
+    stale module is already imported -- so say what happened and what fixes
+    it instead of showing the teacher a traceback.
+    """
+    try:
+        render_teacher_app()
+    except AttributeError as exc:
+        st.error(
+            "**The app was updated while this page was open**, so it is "
+            "running a mix of old and new code.\n\n"
+            "Reload the page. If that does not help, open **Manage app** at "
+            "the bottom right and press **Reboot**."
+        )
+        with st.expander("Technical detail"):
+            st.exception(exc)
+        st.stop()
+
+
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
@@ -1518,9 +1541,9 @@ _token = st.query_params.get("token")
 if _token:
     render_parent_sheet(_token)
 elif "auth" in st.session_state:
-    render_teacher_app()
+    run_teacher_app()
 elif db.USE_SUPABASE and try_resume_session():
-    render_teacher_app()
+    run_teacher_app()
 else:
     render_login()
 
