@@ -8,6 +8,7 @@ These cover the pure functions only -- no Supabase, no Streamlit session.
 
 import re
 
+import rollup
 from rollup import (
     compact_progress,
     group_rows_for,
@@ -159,6 +160,36 @@ def test_the_two_th_sounds_get_the_right_words():
 
     assert "this" in WORDS["th_voiced"] and "that" in WORDS["th_voiced"]
     assert "thin" in WORDS["th_unvoiced"] and "three" in WORDS["th_unvoiced"]
+
+
+def test_a_sound_with_no_test_behind_it_reads_as_untested():
+    """The regression this guards: the word pills default to green, so a
+    child who had never been tested showed a green 100% on every sound
+    while the header above correctly said 0 secure."""
+    tested, correct, total = rollup.sound_score(["w1", "w2"], {})
+    assert tested is False
+    assert total == 2
+
+
+def test_a_tested_sound_reports_its_score():
+    tested, correct, total = rollup.sound_score(
+        ["w1", "w2", "w3"], {"w1": True, "w2": False, "w3": True})
+    assert (tested, correct, total) == (True, 2, 3)
+    assert rollup.status_from_words(correct, total) == "practising"
+
+
+def test_all_wrong_is_tested_not_untested():
+    """None right and never tested look the same in the counts and are not
+    the same thing -- one is a result, the other is the absence of one."""
+    tested, correct, total = rollup.sound_score(["w1"], {"w1": False})
+    assert (tested, correct) == (True, 0)
+
+
+def test_a_word_added_after_the_test_counts_as_read():
+    """It matches what the pills do: an unknown word defaults to green, so
+    a newly added word does not silently downgrade an old result."""
+    tested, correct, total = rollup.sound_score(["w1", "new"], {"w1": True})
+    assert (tested, correct, total) == (True, 2, 2)
 
 
 if __name__ == "__main__":

@@ -111,3 +111,21 @@ def status_from_words(correct: int, total: int) -> str:
     if correct > 0:
         return "practising"
     return "not_yet"
+
+
+def sound_score(word_ids, previous_words) -> tuple[bool, int, int]:
+    """(tested, correct, total) for one sound, from the last test on record.
+
+    ``previous_words`` maps a word id to whether the child read it. A sound
+    with no word in that map has never been tested, which is not the same
+    as a sound the child got none of -- the UI has to say "not tested"
+    rather than show a score, or an untested child reads as a perfect one.
+
+    Within a sound that HAS been tested, a word missing from the map counts
+    as read: that is a word added to the list after the test, and the pills
+    default it to green for the same reason.
+    """
+    ids = list(word_ids)
+    tested = any(wid in previous_words for wid in ids)
+    correct = sum(1 for wid in ids if previous_words.get(wid, True))
+    return tested, correct, len(ids)

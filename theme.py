@@ -259,6 +259,18 @@ def status_style(code: str, theme: str | None = None) -> dict:
     return THEMES[resolve(theme)]["status"][code]
 
 
+def untested_style(theme: str | None = None) -> dict:
+    """The neutral grey a thing wears before there is any result for it.
+
+    Deliberately not one of the three statuses: "no test yet" is a
+    different thing from "got none of them", and colouring it red or green
+    would state a result the teacher has never recorded.
+    """
+    t = THEMES[resolve(theme)]
+    return {"bg": t["group_untested_bg"], "fg": t["group_untested_fg"],
+            "edge": t["border"], "symbol": "—"}
+
+
 def status_badge(code: str, label: str, theme: str | None = None) -> str:
     """A status as a filled pill carrying BOTH a shape and a colour.
 

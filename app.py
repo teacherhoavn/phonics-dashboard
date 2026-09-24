@@ -46,6 +46,7 @@ ACTIVE_THEME = theme.resolve(db.get_setting("PHONICS_THEME"))
 # The stored codes stay explicit ('practising'), only the button text is terse.
 STATUSES = [("acquired", "Got it"), ("practising", "Nearly"), ("not_yet", "Not yet")]
 STATUS_LABELS = [label for _c, label in STATUSES]
+STATUS_BY_CODE = dict(STATUSES)
 LABEL_TO_STATUS = {label: code for code, label in STATUSES}
 STATUS_TO_LABEL = {code: label for code, label in STATUSES}
 
@@ -409,16 +410,32 @@ def render_phonics_test(backend):
                      if previous_words.get(w["id"], True)] if previous_words else words
             # The score shown is the one on record: inside a form the pills
             # do not reach the server until Save, so this is last test's
-            # result until she saves this one.
-            status = rollup.status_from_words(len(saved), len(words))
-            s = theme.status_style(status, ACTIVE_THEME)
-            pct = round(100 * len(saved) / len(words)) if words else 0
+            # result until she saves this one. A sound with no test behind
+            # it says so -- the words default to green, and reading that
+            # default as a score would show an untested child at 100%.
+            tested, correct, total = rollup.sound_score(
+                [w["id"] for w in words], previous_words)
+            if tested:
+                s = theme.status_style(
+                    rollup.status_from_words(correct, total), ACTIVE_THEME)
+                pct = round(100 * correct / total) if total else 0
+                mark = f"{s['symbol']} {pct}% · {correct}/{total}"
+            elif snd["id"] in prefill:
+                # Tests she recorded before per-word scoring existed hold a
+                # status for the sound but no words behind it. That is a
+                # real result, so it shows -- just without a count, which
+                # was never captured.
+                s = theme.status_style(prefill[snd["id"]], ACTIVE_THEME)
+                mark = f"{s['symbol']} {STATUS_BY_CODE[prefill[snd['id']]]}"
+            else:
+                s = theme.untested_style(ACTIVE_THEME)
+                mark = f"{s['symbol']} not tested"
             st.markdown(
                 f"<div class='sound-head'><span class='sound-grapheme'>"
                 f"{snd['grapheme']}</span>"
                 f"<span class='badge' style='background:{s['bg']};color:{s['fg']};"
                 f"border:1.5px solid {s.get('edge', s['bg'])}'>"
-                f"{s['symbol']} {pct}% · {len(saved)}/{len(words)}</span></div>",
+                f"{mark}</span></div>",
                 unsafe_allow_html=True,
             )
             with st.expander(f"{snd['label']} — {snd['example_word'] or ''}"):
@@ -435,6 +452,10 @@ def render_phonics_test(backend):
         saved_test = st.form_submit_button("Save test", type="primary",
                                            use_container_width=True)
 
+    # Carried across the rerun below, so the message survives the redraw.
+    if msg := st.session_state.pop("test_saved_msg", None):
+        st.success(msg)
+
     if saved_test:
         statuses, word_results = {}, {}
         for snd in sounds:
@@ -447,8 +468,13 @@ def render_phonics_test(backend):
         backend.save_test_session(student["id"], group["id"], tested_on,
                                   statuses, note=note, word_results=word_results)
         secure = sum(1 for v in statuses.values() if v == "acquired")
-        st.success(f"Saved Group {group_number} for {student['name']} — "
-                   f"{secure}/{len(sounds)} secure.")
+        st.session_state["test_saved_msg"] = (
+            f"Saved Group {group_number} for {student['name']} — "
+            f"{secure}/{len(sounds)} secure.")
+        # The badges above each sound were drawn before this save, from the
+        # previous test. Rerun so they show what she just recorded, which is
+        # what the caption on this screen promises.
+        st.rerun()
 
     render_lesson_scores(backend, student, tested_on)
 

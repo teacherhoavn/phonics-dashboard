@@ -132,6 +132,19 @@ def test_status_badge_carries_symbol_and_label():
     assert THEMES[DEFAULT_THEME]["status"]["not_yet"]["symbol"] in html
 
 
+def test_untested_badge_is_legible_and_carries_a_shape():
+    """"Not tested" is its own state, not a status. It must not borrow a
+    status colour, and like every other badge it carries a mark as well as
+    a colour so it does not depend on hue."""
+    from theme import untested_style
+
+    u = untested_style(DEFAULT_THEME)
+    assert contrast_ratio(u["fg"], u["bg"]) >= AA_NORMAL
+    assert u["symbol"]
+    statuses = THEMES[DEFAULT_THEME]["status"].values()
+    assert u["bg"] not in {s["bg"] for s in statuses}
+
+
 def test_classic_is_preserved_unchanged_so_the_revert_is_faithful():
     """Reverting must restore the ORIGINAL look, not a touched-up version.
 
