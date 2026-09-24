@@ -417,7 +417,7 @@ def render_phonics_test(backend):
                 [w["id"] for w in words], previous_words)
             if tested:
                 s = theme.status_style(
-                    rollup.status_from_words(correct, total), ACTIVE_THEME)
+                    rollup.colour_from_words(correct, total), ACTIVE_THEME)
                 pct = round(100 * correct / total) if total else 0
                 mark = f"{s['symbol']} {pct}% · {correct}/{total}"
             elif snd["id"] in prefill:
@@ -1158,31 +1158,54 @@ def radar_svg(labels: list, values: list, accent: str, ink: str,
 
 def trend_svg(points: list, accent: str, ink: str, muted: str) -> str:
     """Average per lesson over time. Absences are simply not in `points`, so
-    the line shows a gap rather than dropping to zero."""
+    the line shows a gap rather than dropping to zero.
+
+    Sized to match the radar above it: the viewBox is the size it is meant
+    to be seen at, and max-width stops it scaling past that. Without the
+    cap a laptop stretched this to 856x453 -- a line chart half the height
+    of the screen, with everything in it magnified to match.
+    """
     if len(points) < 2:
         return ""
-    w, h, pad_l, pad_b, pad_t = 340, 180, 26, 26, 12
-    xs = [pad_l + (w - pad_l - 8) * i / (len(points) - 1) for i in range(len(points))]
-    ys = [h - pad_b - (h - pad_b - pad_t) * ((p["average"] - 1) / (SCORE_MAX - 1))
-          for p in points]
+    w, h = 420, 190
+    pad_l, pad_r, pad_b, pad_t = 34, 14, 34, 18
+    span = SCORE_MAX - 1
+
+    def y_for(value):
+        return h - pad_b - (h - pad_b - pad_t) * ((value - 1) / span)
+
+    xs = [pad_l + (w - pad_l - pad_r) * i / (len(points) - 1)
+          for i in range(len(points))]
+    ys = [y_for(p["average"]) for p in points]
+
     grid = "".join(
-        '<line x1="{}" y1="{:.1f}" x2="{}" y2="{:.1f}" stroke="{}" stroke-width="1" '
-        'opacity=".25"/><text x="4" y="{:.1f}" font-size="10" fill="{}">{}</text>'.format(
-            pad_l, y, w - 8, y, ink, y + 3, muted, v)
-        for v, y in ((v, h - pad_b - (h - pad_b - pad_t) * ((v - 1) / (SCORE_MAX - 1)))
-                     for v in (2, 6, 10))
+        '<line x1="{}" y1="{:.1f}" x2="{}" y2="{:.1f}" stroke="{}" '
+        'stroke-width="1" opacity=".22"/>'
+        '<text x="{}" y="{:.1f}" font-size="13" fill="{}" text-anchor="end">{}</text>'
+        .format(pad_l, y, w - pad_r, y, ink, pad_l - 6, y + 4, muted, v)
+        for v, y in ((v, y_for(v)) for v in (2, 6, 10))
     )
     line = " ".join(f"{x:.1f},{y:.1f}" for x, y in zip(xs, ys))
     area = f"{pad_l},{h - pad_b} " + line + f" {xs[-1]:.1f},{h - pad_b}"
-    dots = "".join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3.5" fill="{accent}"/>'
+    # Dots thin out as the term goes on, so twenty lessons stay a line
+    # rather than a string of beads.
+    r = 4 if len(points) <= 8 else (3 if len(points) <= 16 else 2)
+    dots = "".join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="{accent}"/>'
                    for x, y in zip(xs, ys))
-    last = (f'<circle cx="{xs[-1]:.1f}" cy="{ys[-1]:.1f}" r="6" fill="none" '
-            f'stroke="{accent}" stroke-width="2.5"/>')
-    ends = (f'<text x="{pad_l}" y="{h - 8}" font-size="10" fill="{muted}">'
+    # The newest lesson, called out: it is the number a parent looks for.
+    latest = points[-1]["average"]
+    label = f"{latest:.1f}".rstrip("0").rstrip(".")
+    lx = min(xs[-1], w - pad_r - 16)
+    last = (f'<circle cx="{xs[-1]:.1f}" cy="{ys[-1]:.1f}" r="{r + 3}" fill="none" '
+            f'stroke="{accent}" stroke-width="2.5"/>'
+            f'<text x="{lx:.1f}" y="{max(ys[-1] - 14, pad_t):.1f}" font-size="15" '
+            f'font-weight="700" fill="{ink}" text-anchor="end">{label}</text>')
+    ends = (f'<text x="{pad_l}" y="{h - 10}" font-size="13" fill="{muted}">'
             f'{fmt_date(points[0]["date"])}</text>'
-            f'<text x="{w - 8}" y="{h - 8}" font-size="10" fill="{muted}" '
+            f'<text x="{w - pad_r}" y="{h - 10}" font-size="13" fill="{muted}" '
             f'text-anchor="end">{fmt_date(points[-1]["date"])}</text>')
-    return (f'<svg viewBox="0 0 {w} {h}" width="100%" style="display:block" role="img">'
+    return (f'<svg viewBox="0 0 {w} {h}" width="100%" '
+            f'style="max-width:420px;display:block;margin:0 auto" role="img">'
             f'{grid}<polygon points="{area}" fill="{accent}" fill-opacity=".18"/>'
             f'<polyline points="{line}" fill="none" stroke="{accent}" stroke-width="2.5" '
             f'stroke-linejoin="round" stroke-linecap="round"/>{dots}{last}{ends}</svg>')

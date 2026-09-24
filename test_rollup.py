@@ -192,6 +192,37 @@ def test_a_word_added_after_the_test_counts_as_read():
     assert (tested, correct, total) == (True, 2, 2)
 
 
+def test_badge_colour_turns_green_at_eighty_percent():
+    """37 of the 42 sounds have exactly five words, so 4/5 IS the boundary
+    and is the whole point of the change."""
+    assert rollup.colour_from_words(5, 5) == "acquired"
+    assert rollup.colour_from_words(4, 5) == "acquired"
+    assert rollup.colour_from_words(3, 5) == "practising"
+
+
+def test_badge_colour_is_pink_only_when_nothing_was_read():
+    """One word right is still progress, and shows as such."""
+    assert rollup.colour_from_words(1, 5) == "practising"
+    assert rollup.colour_from_words(0, 5) == "not_yet"
+
+
+def test_badge_colour_holds_at_other_list_lengths():
+    """Four- and eight-word lists exist too, so the rule is a percentage
+    rather than a count."""
+    assert rollup.colour_from_words(4, 4) == "acquired"
+    assert rollup.colour_from_words(3, 4) == "practising"   # 75%
+    assert rollup.colour_from_words(7, 8) == "acquired"     # 88%
+    assert rollup.colour_from_words(6, 8) == "practising"   # 75%
+
+
+def test_the_badge_colour_does_not_change_what_counts_as_secure():
+    """The decision behind this: 4/5 shows green to be encouraging, but a
+    group is still only mastered when every word is right. If these two
+    ever collapse into one rule, children start being moved on early."""
+    assert rollup.colour_from_words(4, 5) == "acquired"
+    assert rollup.status_from_words(4, 5) == "practising"
+
+
 if __name__ == "__main__":
     passed = 0
     for name, fn in sorted(globals().items()):

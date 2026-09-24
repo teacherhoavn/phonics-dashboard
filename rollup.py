@@ -129,3 +129,25 @@ def sound_score(word_ids, previous_words) -> tuple[bool, int, int]:
     tested = any(wid in previous_words for wid in ids)
     correct = sum(1 for wid in ids if previous_words.get(wid, True))
     return tested, correct, len(ids)
+
+
+# The badge colour is deliberately NOT the same rule as the stored status
+# above. She asked for the colours to be more encouraging, and separately
+# decided that mastering a group should still take every word -- so a sound
+# can wear a green badge while the group counter still calls it unfinished.
+GREEN_FROM_PERCENT = 80
+
+
+def colour_from_words(correct: int, total: int) -> str:
+    """Which of the three colours a sound's score badge wears.
+
+    Green from 80% of the words, pink only when the child read none of
+    them, yellow for everything in between. Returns a status code so the
+    badge keeps drawing from the same palette as everything else -- it is
+    a colour, not a judgement about mastery.
+    """
+    if not total or correct <= 0:
+        return "not_yet"
+    if 100 * correct >= GREEN_FROM_PERCENT * total:
+        return "acquired"
+    return "practising"
