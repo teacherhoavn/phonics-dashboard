@@ -40,6 +40,12 @@ create table if not exists phonics_sounds (
   id text primary key, group_id text not null, code text not null unique,
   grapheme text not null, label text not null, example_word text,
   action_hint text, order_index int not null);
+create table if not exists phonics_words (
+  id text primary key, sound_id text not null, word text not null,
+  order_index int not null, unique (sound_id, word));
+create table if not exists test_word_results (
+  session_id text not null, word_id text not null, correct int not null,
+  primary key (session_id, word_id));
 create table if not exists test_sessions (
   id text primary key, student_id text not null, group_id text not null,
   tested_on text not null, note text, created_at text default (datetime('now')));
@@ -94,6 +100,7 @@ class SqliteBackend:
         self._add_missing_columns()
         self._seed_reference()
         self._seed_criteria()
+        self._seed_words()
         self._seed_demo_roster()
         self.conn.commit()
 
@@ -170,6 +177,22 @@ class SqliteBackend:
                 " name_vi=excluded.name_vi, short_label=excluded.short_label",
                 (_uid(), code, en, vi, short, desc, i),
             )
+
+    def _seed_words(self):
+        """The teacher's own word list, from phonics_words_data.py."""
+        from phonics_words_data import WORDS
+
+        codes = {r["code"]: r["id"] for r in self._rows("select code, id from phonics_sounds")}
+        for code, words in WORDS.items():
+            sound_id = codes.get(code)
+            if not sound_id:
+                continue
+            for i, word in enumerate(words, 1):
+                self.conn.execute(
+                    "insert into phonics_words (id, sound_id, word, order_index)"
+                    " values (?,?,?,?) on conflict(sound_id, word)"
+                    " do update set order_index=excluded.order_index",
+                    (_uid(), sound_id, word, i))
 
     def _seed_demo_roster(self):
         """A small fake class, so the screens have something to show."""
@@ -331,9 +354,30 @@ class SqliteBackend:
             )
         return self._rows("select * from phonics_sounds order by order_index")
 
+    def words_for_group(self, group_id) -> dict:
+        sounds = self.list_sounds(group_id=group_id)
+        out = {s["id"]: [] for s in sounds}
+        for s in sounds:
+            out[s["id"]] = self._rows(
+                "select * from phonics_words where sound_id=? order by order_index",
+                (s["id"],))
+        return out
+
+    def latest_word_results(self, student_id, group_id) -> dict:
+        row = self.conn.execute(
+            "select id from test_sessions where student_id=? and group_id=?"
+            " order by tested_on desc, created_at desc limit 1",
+            (student_id, group_id)).fetchone()
+        if not row:
+            return {}
+        return {r["word_id"]: bool(r["correct"]) for r in self.conn.execute(
+            "select word_id, correct from test_word_results where session_id=?",
+            (row["id"],))}
+
     # -- phonics tests -----------------------------------------------------
 
-    def save_test_session(self, student_id, group_id, tested_on, results, note=None) -> str:
+    def save_test_session(self, student_id, group_id, tested_on, results, note=None,
+                          word_results=None) -> str:
         sess = _uid()
         self.conn.execute(
             "insert into test_sessions (id, student_id, group_id, tested_on, note)"
@@ -346,6 +390,10 @@ class SqliteBackend:
                 "insert into test_results (id, session_id, sound_id, status) values (?,?,?,?)",
                 (_uid(), sess, sid, status),
             )
+        for wid, ok in (word_results or {}).items():
+            self.conn.execute(
+                "insert into test_word_results (session_id, word_id, correct)"
+                " values (?,?,?)", (sess, wid, int(bool(ok))))
         self.conn.commit()
         return sess
 
@@ -362,6 +410,17 @@ class SqliteBackend:
                 "sounds_preview": r.pop("_preview"),
             }
         return rows
+
+    def session_word_results(self, session_id) -> dict:
+        out = {}
+        for r in self._rows(
+                "select r.correct, w.word, w.sound_id, w.order_index"
+                " from test_word_results r join phonics_words w on w.id = r.word_id"
+                " where r.session_id=? order by w.order_index", (session_id,)):
+            out.setdefault(r["sound_id"], []).append(
+                {"word": r["word"], "correct": bool(r["correct"]),
+                 "order_index": r["order_index"]})
+        return out
 
     def get_session_results(self, session_id) -> list:
         rows = self._rows(

@@ -80,6 +80,19 @@ create table if not exists phonics_sounds (
 
 create index if not exists phonics_sounds_group_idx on phonics_sounds(group_id, order_index);
 
+-- The words the teacher asks for each sound. A sound's colour is worked out
+-- from how many of its words the child read, so the words are the record and
+-- the colour is derived -- see seed_words.sql for the list she supplied.
+create table if not exists phonics_words (
+  id uuid primary key default gen_random_uuid(),
+  sound_id uuid not null references phonics_sounds(id) on delete cascade,
+  word text not null,
+  order_index int not null,
+  unique (sound_id, word)
+);
+
+create index if not exists phonics_words_sound_idx on phonics_words(sound_id, order_index);
+
 -- ------------------------------------------------------------
 -- Phonics group tests (the tap-only 1:1 test screen)
 --
@@ -112,6 +125,16 @@ create table if not exists test_results (
 );
 
 create index if not exists test_results_session_idx on test_results(session_id);
+
+-- Which individual words were read correctly. test_results keeps the summary
+-- status per sound so the roll-up views stay simple; this is the detail
+-- behind it, and what lets her see WHICH word a child stumbled on.
+create table if not exists test_word_results (
+  session_id uuid not null references test_sessions(id) on delete cascade,
+  word_id uuid not null references phonics_words(id) on delete cascade,
+  correct boolean not null,
+  primary key (session_id, word_id)
+);
 
 create table if not exists checkin_criteria (
   id uuid primary key default gen_random_uuid(),

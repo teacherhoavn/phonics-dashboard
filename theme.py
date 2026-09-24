@@ -341,22 +341,6 @@ BASE_CSS = """
     color: var(--ink-soft) !important; font-size: 1rem !important;
   }
 
-  /* The mark-all shortcuts are outlined in the colour they apply, so they
-     read as "set everything to this" rather than as a second row of the
-     per-sound buttons. */
-  [class*="st-key-bulk_acquired"] button {
-    border: 3px solid var(--got-edge) !important; color: var(--got-text) !important;
-    font-weight: 700;
-  }
-  [class*="st-key-bulk_practising"] button {
-    border: 3px solid var(--near-edge) !important; color: var(--near-text) !important;
-    font-weight: 700;
-  }
-  [class*="st-key-bulk_not_yet"] button {
-    border: 3px solid var(--not-edge) !important; color: var(--not-text) !important;
-    font-weight: 700;
-  }
-
   /* Two lengths of the same sentence: the full wording on a laptop, a
      compact one on a phone where five wrapped lines push the sounds down. */
   .only-narrow { display: none; }
@@ -367,6 +351,9 @@ BASE_CSS = """
     min-height: var(--tap-min);
   }
   [data-testid="stNumberInput"] label p { font-size: 1rem; font-weight: 600; }
+
+  /* Word pills: big enough to tap, and obviously on or off. */
+  [data-testid="stButtonGroup"] button { min-height: 44px; }
 
   .badge {
     display: inline-block; padding: .2rem .6rem; border-radius: 999px;
@@ -444,14 +431,6 @@ BASE_CSS = """
   }
   [class*="st-key-grp_"] [data-testid="stButtonGroup"] button {
     flex: 1 1 12%; padding-left: .3rem; padding-right: .3rem;
-  }
-
-  /* Mark-all row stays three across rather than stacking into three rows. */
-  [data-testid="stHorizontalBlock"]:has([class*="st-key-bulk_"]) {
-    flex-wrap: nowrap !important; gap: .4rem;
-  }
-  [data-testid="stHorizontalBlock"]:has([class*="st-key-bulk_"]) > [data-testid="stColumn"] {
-    min-width: 0 !important;
   }
 
   /* Child's name and the "Change child" button share one row on a phone. */

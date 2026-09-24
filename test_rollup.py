@@ -128,6 +128,39 @@ def test_local_backend_matches_the_seed_file():
     assert {s[1] for s in sounds} >= {"s", "c_k", "oo_short", "th_voiced", "ar"}
 
 
+def test_status_from_words_all_some_none():
+    from rollup import status_from_words
+
+    assert status_from_words(5, 5) == "acquired"
+    assert status_from_words(4, 5) == "practising"
+    assert status_from_words(1, 5) == "practising"
+    assert status_from_words(0, 5) == "not_yet"
+    # A sound with no words recorded cannot be called secure.
+    assert status_from_words(0, 0) == "not_yet"
+
+
+def test_word_list_covers_every_sound():
+    """Each of the 42 sounds needs words, or it can never be scored."""
+    import re
+
+    from phonics_words_data import WORDS
+
+    sql = open("seed_phonics.sql").read()
+    block = sql.split("from (values", 1)[1].split(") as v(", 1)[0]
+    codes = {c for _g, c in re.findall(r"\(\s*(\d)\s*,\s*'((?:[^']|'')*)'", block)}
+    assert set(WORDS) == codes, f"mismatch: {set(WORDS) ^ codes}"
+    assert all(WORDS.values()), "every sound needs at least one word"
+
+
+def test_the_two_th_sounds_get_the_right_words():
+    """Her document lists voiced th first; the app lists unvoiced first, so
+    these were matched by sound rather than by position."""
+    from phonics_words_data import WORDS
+
+    assert "this" in WORDS["th_voiced"] and "that" in WORDS["th_voiced"]
+    assert "thin" in WORDS["th_unvoiced"] and "three" in WORDS["th_unvoiced"]
+
+
 if __name__ == "__main__":
     passed = 0
     for name, fn in sorted(globals().items()):

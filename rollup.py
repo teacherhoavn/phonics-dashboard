@@ -98,3 +98,16 @@ def compact_progress(rows: list) -> str:
     if working and _has_results(working):
         bits.append(f"G{working['group_number']} {working['acquired']}/{working['total_sounds']}")
     return " · ".join(bits) or "—"
+
+
+# How a sound's colour is worked out from its words. Kept here, in one place,
+# so the rule can be changed without hunting through the UI.
+def status_from_words(correct: int, total: int) -> str:
+    """all right -> acquired, at least one right -> practising, none -> not_yet."""
+    if not total:
+        return "not_yet"
+    if correct >= total:
+        return "acquired"
+    if correct > 0:
+        return "practising"
+    return "not_yet"

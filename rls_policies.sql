@@ -42,6 +42,8 @@ alter table phonics_groups  enable row level security;
 alter table phonics_sounds  enable row level security;
 alter table test_sessions   enable row level security;
 alter table test_results    enable row level security;
+alter table phonics_words    enable row level security;
+alter table test_word_results enable row level security;
 alter table checkin_criteria enable row level security;
 alter table checkins         enable row level security;
 alter table checkin_scores   enable row level security;
@@ -53,7 +55,8 @@ begin
   foreach t in array array[
     'classes', 'students', 'phonics_groups', 'phonics_sounds',
     'test_sessions', 'test_results',
-    'checkin_criteria', 'checkins', 'checkin_scores'
+    'checkin_criteria', 'checkins', 'checkin_scores',
+    'phonics_words', 'test_word_results'
   ] loop
     execute format('drop policy if exists "authenticated read access" on %I', t);
     execute format(
@@ -73,7 +76,8 @@ end $$;
 -- expose data.
 revoke all on classes, students, phonics_groups, phonics_sounds,
   test_sessions, test_results,
-  checkin_criteria, checkins, checkin_scores from anon;
+  checkin_criteria, checkins, checkin_scores,
+  phonics_words, test_word_results from anon;
 
 -- The two derived views are security_invoker (see schema.sql), so they
 -- enforce the policies above on behalf of whoever queries them.

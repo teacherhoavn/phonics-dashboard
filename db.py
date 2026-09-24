@@ -149,10 +149,46 @@ class SupabaseBackend:
             q = q.eq("group_id", group_id)
         return q.execute().data
 
+    def words_for_group(self, group_id: str) -> dict:
+        """{sound_id: [{id, word, order_index}, ...]} for one group."""
+        sounds = self.list_sounds(group_id=group_id)
+        if not sounds:
+            return {}
+        rows = (
+            self.client.table("phonics_words")
+            .select("*")
+            .in_("sound_id", [s["id"] for s in sounds])
+            .order("order_index")
+            .execute()
+            .data
+        )
+        out = {s["id"]: [] for s in sounds}
+        for w in rows:
+            out.setdefault(w["sound_id"], []).append(w)
+        return out
+
+    def latest_word_results(self, student_id: str, group_id: str) -> dict:
+        """{word_id: correct} from this student's last test of this group."""
+        sessions = (
+            self.client.table("test_sessions").select("id")
+            .eq("student_id", student_id).eq("group_id", group_id)
+            .order("tested_on", desc=True).order("created_at", desc=True)
+            .limit(1).execute().data
+        )
+        if not sessions:
+            return {}
+        rows = (
+            self.client.table("test_word_results")
+            .select("word_id, correct").eq("session_id", sessions[0]["id"])
+            .execute().data
+        )
+        return {r["word_id"]: r["correct"] for r in rows}
+
     # -- phonics tests -----------------------------------------------------
 
     def save_test_session(self, student_id: str, group_id: str, tested_on: date,
-                          results: dict, note: str = None) -> str:
+                          results: dict, note: str = None,
+                          word_results: dict = None) -> str:
         """One insert for the session, one batched insert for all its results.
 
         Deliberately not one write per tap: a live test is 6 taps, and 6
@@ -178,6 +214,11 @@ class SupabaseBackend:
         ]
         if rows:
             self.client.table("test_results").insert(rows).execute()
+        if word_results:
+            self.client.table("test_word_results").insert([
+                {"session_id": session["id"], "word_id": wid, "correct": bool(ok)}
+                for wid, ok in word_results.items()
+            ]).execute()
         return session["id"]
 
     def list_test_sessions(self, student_id: str, limit: int = 20) -> list:
@@ -191,6 +232,22 @@ class SupabaseBackend:
             .execute()
             .data
         )
+
+    def session_word_results(self, session_id: str) -> dict:
+        rows = (
+            self.client.table("test_word_results")
+            .select("correct, phonics_words(word, sound_id, order_index)")
+            .eq("session_id", session_id).execute().data
+        )
+        out = {}
+        for r in rows:
+            w = r.get("phonics_words") or {}
+            out.setdefault(w.get("sound_id"), []).append(
+                {"word": w.get("word"), "correct": r["correct"],
+                 "order_index": w.get("order_index") or 0})
+        for v in out.values():
+            v.sort(key=lambda x: x["order_index"])
+        return out
 
     def get_session_results(self, session_id: str) -> list:
         return (

@@ -19,6 +19,7 @@ from PIL import Image
 
 import db
 import theme
+import rollup
 from rollup import (
     TOTAL_SOUNDS,
     compact_progress,
@@ -230,17 +231,12 @@ def _use_today():
     st.session_state.test_date = date.today()
 
 
-def _sound_key(student_id: str, group_id: str, sound_id: str) -> str:
-    # Group and student are in the key so switching either starts clean
-    # rather than inheriting the previous child's taps.
-    return f"snd_{student_id}_{group_id}_{sound_id}"
-
-
 def render_phonics_test(backend):
     st.subheader("Phonics test")
     st.markdown(
-        '<p class="screen-help">Pick a child, pick a group, tap once per sound. '
-        "Nothing is written until you press Save, so tapping stays instant.</p>",
+        '<p class="screen-help">Pick a child, pick a group, then open each sound '
+        "and un-tick any word they could not read. Nothing is saved until you "
+        "press Save test.</p>",
         unsafe_allow_html=True,
     )
 
@@ -373,81 +369,78 @@ def render_phonics_test(backend):
         )
 
     sounds = backend.list_sounds(group_id=group["id"])
+    words_by_sound = backend.words_for_group(group["id"])
+    previous_words = backend.latest_word_results(student["id"], group["id"])
 
-    # --- bulk shortcut: a child who knows the whole set shouldn't cost 6 taps
-    st.caption("Whole group the same? Set all six at once:")
-    bulk_cols = st.columns(3)
-    for i, (code, label) in enumerate(STATUSES):
-        if bulk_cols[i].button(label, key=f"bulk_{code}", use_container_width=True):
-            for snd in sounds:
-                st.session_state[_sound_key(student["id"], group["id"], snd["id"])] = \
-                    STATUS_TO_LABEL[code]
-            st.rerun()
-
-    # --- the six sounds ----------------------------------------------------
-    for snd in sounds:
-        key = _sound_key(student["id"], group["id"], snd["id"])
-        default = STATUS_TO_LABEL.get(prefill.get(snd["id"]))
-        c1, c2 = st.columns([1, 3])
-        c1.markdown(
-            f'<div class="sound-card">'
-            f'<span class="sound-grapheme">{snd["grapheme"]}</span>'
-            # The example word doubles as the disambiguator for the two
-            # sounds written "oo" and the two written "th".
-            f'<span class="sound-meta">{snd["example_word"] or snd["label"]}</span></div>'
-            f'<div class="sound-action">{snd["action_hint"] or ""}</div>',
-            unsafe_allow_html=True,
-        )
-        with c2:
-            # Seed the last test's result into session state once, instead of
-            # passing `default=`. "Mark all" also writes these keys, and a
-            # widget given both a default and a session-state value makes
-            # Streamlit print a warning under every sound. Seeding once keeps
-            # taps sticky across reruns and gives each widget one source.
-            if key not in st.session_state:
-                st.session_state[key] = default
-            st.segmented_control(
-                snd["label"], STATUS_LABELS,
-                key=key, label_visibility="collapsed",
-            )
-
-    marked = {
-        snd["id"]: LABEL_TO_STATUS[st.session_state[_sound_key(student["id"], group["id"], snd["id"])]]
-        for snd in sounds
-        if st.session_state.get(_sound_key(student["id"], group["id"], snd["id"]))
-    }
-
-    st.divider()
-    with st.expander("Add a note (optional)"):
-        st.caption("Skip this during a live test — it is never required to save.")
-        st.text_area("Note", key=f"note_{student['id']}_{group['id']}",
-                     label_visibility="collapsed")
-
-    col_s, col_i = st.columns([1, 3])
-    save = col_s.button("Save test", type="primary", use_container_width=True,
-                        disabled=not marked)
-    col_i.markdown(
-        f"<div style='padding-top:.5rem;color:#6b7280'>{len(marked)} of "
-        f"{len(sounds)} sounds marked</div>",
-        unsafe_allow_html=True,
+    st.caption(
+        "Each sound opens to its words. **Tap a word to un-tick it** if the "
+        "child could not read it — words start ticked, so a child who reads "
+        "them all needs no taps. The colour follows: all words right is green, "
+        "some is yellow, none is red."
     )
 
-    if save:
-        note = st.session_state.get(f"note_{student['id']}_{group['id']}")
-        backend.save_test_session(
-            student["id"], group["id"], tested_on, marked, note=note
-        )
-        # Drop the widget state so the next visit reflects what was saved
-        # rather than a stale in-session tap.
-        for snd in sounds:
-            st.session_state.pop(_sound_key(student["id"], group["id"], snd["id"]), None)
-        st.session_state.pop(f"note_{student['id']}_{group['id']}", None)
-        acquired = sum(1 for v in marked.values() if v == "acquired")
-        st.success(
-            f"Saved Group {group_number} for {student['name']} — "
-            f"{acquired}/{len(sounds)} secure."
-        )
+    # Shortcuts have to sit OUTSIDE the form -- a form only allows its own
+    # submit button -- so these cost one page update each. They are for the
+    # child who reads everything or nothing, not per-word work.
+    def _set_all(correct: bool):
+        for s2 in sounds:
+            key = f"w_{student['id']}_{group['id']}_{s2['id']}"
+            st.session_state[key] = (
+                [w["word"] for w in words_by_sound.get(s2["id"], [])] if correct else [])
+
+    quick1, quick2, _rest = st.columns([1, 1, 1.4])
+    if quick1.button("Got it all", use_container_width=True, key="tick_all",
+                     help="Tick every word in every sound."):
+        _set_all(True)
         st.rerun()
+    if quick2.button("Not yet, any", use_container_width=True, key="clear_all",
+                     help="Clear every word in every sound."):
+        _set_all(False)
+        st.rerun()
+
+    # Everything below sits in one form. Streamlit contacts the server on
+    # every widget change, so tapping 30 word pills outside a form would mean
+    # 30 page waits on her phone; inside one, nothing is sent until Save.
+    with st.form(f"test_{student['id']}_{group['id']}_{tested_on.isoformat()}"):
+        picked = {}
+        for snd in sounds:
+            words = words_by_sound.get(snd["id"], [])
+            saved = [w for w in words
+                     if previous_words.get(w["id"], True)] if previous_words else words
+            label_status = rollup.status_from_words(len(saved), len(words))
+            s = theme.status_style(label_status, ACTIVE_THEME)
+            head = (f"{s['symbol']}  {snd['grapheme']}  —  {snd['example_word'] or ''}"
+                    f"   ({len(saved)}/{len(words)})")
+            with st.expander(head):
+                if snd.get("action_hint"):
+                    st.caption(snd["action_hint"])
+                picked[snd["id"]] = st.pills(
+                    snd["label"], [w["word"] for w in words],
+                    selection_mode="multi",
+                    default=[w["word"] for w in saved],
+                    key=f"w_{student['id']}_{group['id']}_{snd['id']}",
+                    label_visibility="collapsed",
+                )
+
+        note = st.text_area("Note for this test (optional)", max_chars=600,
+                            key=f"note_{student['id']}_{group['id']}")
+        saved_test = st.form_submit_button("Save test", type="primary",
+                                           use_container_width=True)
+
+    if saved_test:
+        statuses, word_results = {}, {}
+        for snd in sounds:
+            words = words_by_sound.get(snd["id"], [])
+            chosen = set(picked.get(snd["id"]) or [])
+            for w in words:
+                word_results[w["id"]] = w["word"] in chosen
+            statuses[snd["id"]] = rollup.status_from_words(
+                sum(1 for w in words if w["word"] in chosen), len(words))
+        backend.save_test_session(student["id"], group["id"], tested_on,
+                                  statuses, note=note, word_results=word_results)
+        secure = sum(1 for v in statuses.values() if v == "acquired")
+        st.success(f"Saved Group {group_number} for {student['name']} — "
+                   f"{secure}/{len(sounds)} secure.")
 
     render_lesson_scores(backend, student, tested_on)
 
