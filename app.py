@@ -71,6 +71,7 @@ def sound_chip(code: str, grapheme: str) -> str:
 # into an average turns "was away" into "did badly" on a parent's trend line,
 # and that cannot be undone after a term of entries.
 SCORE_MIN, SCORE_MAX = 1, 10
+SCORE_CHOICES = list(range(SCORE_MIN, SCORE_MAX + 1))
 DEFAULT_SCORE = 8
 
 AUTH_COOKIE = "phonics_sb_refresh"
@@ -499,9 +500,10 @@ def render_lesson_scores(backend, student, on_date):
     with st.form(f"scores_{student['id']}_{on_date.isoformat()}"):
         st.markdown(f"**Lesson scores** · {on_date.strftime('%-d %b')}")
         st.caption(
-            "Type a score from **1 to 10** for each, then press Save. It starts "
-            "from last lesson, so change only what moved. Leave one blank if it "
-            "did not apply — no homework set, say."
+            "Tap a score from **1 to 10** for each, then press Save. It starts "
+            "from last lesson, so change only what moved. Leave one untapped if "
+            "it did not apply — no homework set, say. Tap the same number again "
+            "to clear it."
         )
         away = st.checkbox(
             "Away today", value=bool(existing["absent"]) if existing else False,
@@ -509,13 +511,17 @@ def render_lesson_scores(backend, student, on_date):
                  "averages rather than counted as a zero.",
         )
 
+        # Pills rather than a number box with +/- steppers. Streamlit
+        # disables BOTH steppers when a number field starts empty -- it has
+        # no value to step from -- so for any child who had never been
+        # scored the buttons were dead, which is what she ran into. A pill
+        # is also one tap instead of a keyboard, and a 52px target.
         values = {}
         for c in criteria:
-            values[c["id"]] = st.number_input(
-                c["name_en"], min_value=SCORE_MIN, max_value=SCORE_MAX, step=1,
-                value=source.get(c["id"]), help=c.get("description_en"),
+            values[c["id"]] = st.pills(
+                c["name_en"], SCORE_CHOICES, selection_mode="single",
+                default=source.get(c["id"]), help=c.get("description_en"),
                 key=f"sc_{student['id']}_{c['id']}_{on_date.isoformat()}",
-                placeholder="1–10",
             )
 
         note = st.text_area(

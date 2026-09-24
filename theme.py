@@ -366,6 +366,22 @@ BASE_CSS = """
     text-decoration: line-through;
   }
 
+  /* Lesson-score pills, 1 to 10. They replaced a number box with +/-
+     steppers: Streamlit disables both steppers while a number field is
+     empty, so every child who had never been scored got dead buttons.
+     A pill is one tap, needs no keyboard, and selected reads as a solid
+     fill against an outline -- weight and fill, not hue alone. */
+  [class*="st-key-sc_"] [data-testid="stBaseButton-pills"] {
+    background: var(--chip-bg) !important; color: var(--chip-fg) !important;
+    border: 2px solid var(--chip-border) !important;
+    font-weight: 700; min-width: 46px;
+  }
+  [class*="st-key-sc_"] [data-testid="stBaseButton-pillsActive"] {
+    background: var(--accent-fill) !important; color: var(--accent-ink) !important;
+    border: 2px solid var(--accent-edge) !important; font-weight: 800;
+  }
+  [class*="st-key-sc_"] label p { font-size: 1rem; font-weight: 600; }
+
   /* Sound heading: the letter, and the score on record beside it. */
   .sound-head {
     display: flex; align-items: center; gap: .6rem; margin: .5rem 0 -.2rem;
