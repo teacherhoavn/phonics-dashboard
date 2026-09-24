@@ -223,46 +223,6 @@ def _remember_date():
     st.session_state[DATE_KEY] = st.session_state.test_date
 
 
-def _score_key(student_id: str, criterion_id: str) -> str:
-    return f"sc_{student_id}_{criterion_id}"
-
-
-def _bump(key: str, delta: int):
-    current = st.session_state.get(key, DEFAULT_SCORE) or DEFAULT_SCORE
-    st.session_state[key] = max(SCORE_MIN, min(SCORE_MAX, current + delta))
-
-
-def _clear_score(key: str):
-    st.session_state[key] = None
-
-
-def render_stepper(label: str, key: str, help_text: str = None):
-    """A score as minus / value / plus.
-
-    Ten buttons in a row would be ~34px each on a phone, below a reliable tap
-    target, so the value is nudged instead. It starts from last lesson's
-    score, which means most children need no taps at all.
-    """
-    value = st.session_state.get(key)
-    c1, c2, c3, c4 = st.columns([3, 1, 1.2, 1])
-    c1.markdown(
-        f"<div class='crit-name'>{label}</div>"
-        + (f"<div class='crit-help'>{help_text}</div>" if help_text else ""),
-        unsafe_allow_html=True,
-    )
-    # Full-width plus/minus (U+FF0B, U+2212), not "+" and "-": Streamlit
-    # renders button labels as markdown, where a lone "+" is a list bullet
-    # and renders as an empty button.
-    c2.button("−", key=f"{key}_dn", on_click=_bump, args=(key, -1),
-              use_container_width=True, disabled=value is None)
-    c3.markdown(
-        f"<div class='crit-score'>{value if value is not None else '—'}</div>",
-        unsafe_allow_html=True,
-    )
-    c4.button("＋", key=f"{key}_up", on_click=_bump, args=(key, 1),
-              use_container_width=True)
-
-
 def _use_today():
     """Reset the test date. A callback, because Streamlit forbids writing to a
     widget's key after that widget has been created in the same run."""
@@ -519,11 +479,13 @@ def render_phonics_test(backend):
 # ---------------------------------------------------------------------------
 
 def render_lesson_scores(backend, student, on_date):
-    """The six lesson criteria for the child already on screen.
+    """The lesson criteria for the child already on screen.
 
-    She is sitting with this child anyway, so scoring them here costs nothing
-    extra; the whole-class grid stays for when she would rather do everyone
-    at the end.
+    Everything sits inside a form on purpose. Streamlit sends a request to
+    the server on every widget change, and on a phone that made each tap of
+    the old plus/minus buttons wait for a page update. Inside a form nothing
+    is sent until Save, so typing six numbers costs one round trip instead
+    of a dozen.
     """
     criteria = backend.list_criteria()
     if not criteria:
@@ -534,47 +496,46 @@ def render_lesson_scores(backend, student, on_date):
     previous = backend.latest_checkins([student["id"]]).get(student["id"], {})
     source = existing["scores"] if existing else previous.get("scores", {})
 
-    for c in criteria:
-        key = _score_key(student["id"], c["id"])
-        if key not in st.session_state:
-            st.session_state[key] = source.get(c["id"])
-
-    absent_key = f"absent_{student['id']}_{on_date.isoformat()}"
-    if absent_key not in st.session_state:
-        st.session_state[absent_key] = bool(existing["absent"]) if existing else False
-
-    head, mark = st.columns([2, 1])
-    head.markdown(f"**Lesson scores** · {on_date.strftime('%-d %b')}")
-    absent = mark.toggle("Absent", key=absent_key)
-
-    if absent:
-        st.info("Marked absent — no scores are recorded, and this lesson is "
-                "left out of the averages rather than counted as zero.")
-    else:
+    with st.form(f"scores_{student['id']}_{on_date.isoformat()}"):
+        st.markdown(f"**Lesson scores** · {on_date.strftime('%-d %b')}")
         st.caption(
-            "Out of 10, starting from last lesson. Leave one blank if it did "
-            "not apply — no homework set, say."
+            "Type a score from **1 to 10** for each, then press Save. It starts "
+            "from last lesson, so change only what moved. Leave one blank if it "
+            "did not apply — no homework set, say."
         )
+        away = st.checkbox(
+            "Away today", value=bool(existing["absent"]) if existing else False,
+            help="Saves the lesson as an absence. It is left out of the "
+                 "averages rather than counted as a zero.",
+        )
+
+        values = {}
         for c in criteria:
-            render_stepper(c["name_en"], _score_key(student["id"], c["id"]),
-                           c.get("description_en"))
+            values[c["id"]] = st.number_input(
+                c["name_en"], min_value=SCORE_MIN, max_value=SCORE_MAX, step=1,
+                value=source.get(c["id"]), help=c.get("description_en"),
+                key=f"sc_{student['id']}_{c['id']}_{on_date.isoformat()}",
+                placeholder="1–10",
+            )
 
-    note = st.text_area("Note for this lesson (optional)",
-                        value=(existing or {}).get("notes") or "",
-                        key=f"cnote_{student['id']}_{on_date.isoformat()}",
-                        max_chars=600)
+        note = st.text_area(
+            "Note for this lesson (optional)",
+            value=(existing or {}).get("notes") or "", max_chars=600,
+        )
+        saved = st.form_submit_button("Save lesson scores", type="primary",
+                                      use_container_width=True)
 
-    if st.button("Save lesson scores", key=f"save_scores_{student['id']}"):
-        scores = {
-            c["id"]: st.session_state.get(_score_key(student["id"], c["id"]))
-            for c in criteria
-        }
-        backend.save_checkin(student["id"], on_date,
-                             {k: v for k, v in scores.items() if v},
-                             absent=absent, notes=note)
-        st.success(
-            f"Saved for {student['name']}."
-            if not absent else f"{student['name']} marked absent.")
+    if saved:
+        backend.save_checkin(
+            student["id"], on_date,
+            {} if away else {k: v for k, v in values.items() if v},
+            absent=away, notes=note,
+        )
+        if away:
+            st.success(f"{student['name']} marked away for {on_date.strftime('%-d %b')}.")
+        else:
+            scored = len([v for v in values.values() if v])
+            st.success(f"Saved {scored} score(s) for {student['name']}.")
 
 
 def render_class_checkin(backend):
