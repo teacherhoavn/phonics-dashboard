@@ -129,6 +129,48 @@ def build_qr_png(url: str) -> bytes:
     return buf.getvalue()
 
 
+def app_base_url() -> str:
+    """Where this app is being served from.
+
+    Worked out from the page the teacher is already looking at, so she never
+    has to type it -- and so a QR can never be generated against a stale
+    address she pasted once and forgot. APP_BASE_URL overrides it if the app
+    is ever put behind its own domain.
+    """
+    configured = db.get_setting("APP_BASE_URL")
+    if configured:
+        return str(configured).rstrip("/")
+    try:
+        from urllib.parse import urlparse
+
+        parts = urlparse(st.context.url)
+        if parts.scheme and parts.netloc:
+            return f"{parts.scheme}://{parts.netloc}"
+    except Exception:
+        pass
+    return ""
+
+
+def parent_link(student: dict) -> str:
+    base = app_base_url()
+    return f"{base}/?token={student['access_token']}" if base else \
+        f"?token={student['access_token']}"
+
+
+def render_parent_link(student: dict, show_qr: bool = True):
+    """The child's private link, plus the QR she prints for their parents."""
+    link = parent_link(student)
+    st.markdown(f"**{student['name']}**")
+    st.code(link, language=None)
+    if show_qr and app_base_url():
+        st.image(build_qr_png(link), width=200)
+    elif show_qr:
+        st.warning("Could not work out this app's address, so no QR yet. "
+                   "Open the app on its real web address rather than through "
+                   "a preview, or set APP_BASE_URL in the app's secrets.")
+    st.caption("Private link — anyone who has it can see this child's page.")
+
+
 def fmt_date(value) -> str:
     if not value:
         return "—"
@@ -804,28 +846,7 @@ def render_progress(backend, read_only: bool = False):
     if not read_only:
         st.divider()
         st.markdown("**Parent sheet link**")
-        base = st.text_input(
-            "Your app's URL", value=st.session_state.get("app_base_url", ""),
-            placeholder="https://your-app.streamlit.app", key="app_base_url",
-        )
-        link = f"{base.rstrip('/')}/?token={student['access_token']}" if base else \
-            f"?token={student['access_token']}"
-        st.code(link, language=None)
-        st.caption("Private link — anyone with it can see this child's sheet.")
-
-        if base:
-            col_q, col_t = st.columns([1, 2])
-            col_q.image(build_qr_png(link), width=180)
-            col_t.warning(
-                "**Do not print this until the app is on its final public "
-                "address.** A QR code contains the whole URL, so every "
-                "printed copy stops working if the address changes later."
-            )
-        else:
-            st.info(
-                "Enter the app's public URL above to generate a QR code for "
-                "this child's parents."
-            )
+        render_parent_link(student)
 
 
 # ---------------------------------------------------------------------------
@@ -1030,6 +1051,42 @@ def render_students(backend, read_only: bool = False):
 
     if read_only:
         return
+
+    st.divider()
+    st.markdown("**Parent links** — tap a child to see their link and QR code")
+    active = [s for s in students if not s["archived"]]
+    if active:
+        cols = st.columns(min(len(active), 4))
+        for i, s in enumerate(active):
+            selected = st.session_state.get("qr_student_id") == s["id"]
+            if cols[i % len(cols)].button(
+                s["name"], key=f"qr_{s['id']}", use_container_width=True,
+                type="primary" if selected else "secondary",
+            ):
+                st.session_state.qr_student_id = s["id"]
+                st.rerun()
+
+        chosen = next((s for s in active
+                       if s["id"] == st.session_state.get("qr_student_id")), None)
+        if chosen:
+            render_parent_link(chosen)
+        else:
+            st.caption("Tap a name above.")
+
+        with st.expander(f"All {len(active)} QR codes — for printing in one go"):
+            if not app_base_url():
+                st.warning("Open the app on its real web address to print QR codes.")
+            else:
+                st.caption(
+                    "One card per family. Print this page, cut them up, and hand "
+                    "each parent their own."
+                )
+                for start in range(0, len(active), 3):
+                    row = active[start:start + 3]
+                    qcols = st.columns(3)
+                    for col, s in zip(qcols, row):
+                        col.markdown(f"**{s['name']}**")
+                        col.image(build_qr_png(parent_link(s)), width=150)
 
     # Photos cannot live in the grid, so they get their own control rather
     # than being settable only at the moment a student is created.
