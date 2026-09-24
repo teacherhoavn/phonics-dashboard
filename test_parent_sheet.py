@@ -164,6 +164,82 @@ def test_group_summary_covers_all_seven():
     assert sorted(g["group_number"] for g in groups) == list(range(1, 8))
 
 
+def test_saving_the_same_test_twice_keeps_one_test():
+    """The bug this guards: she pressed Save several times on one test and
+    the parent timeline listed it as six separate tests in a day."""
+    from datetime import date
+
+    b, token = fresh()
+    student = b.conn.execute(
+        "select id from students where name like 'An%'").fetchone()["id"]
+    group = b.list_groups()[0]
+    sounds = b.list_sounds(group_id=group["id"])
+    on = date(2026, 9, 24)
+
+    before = len(b.list_test_sessions(student, limit=50))
+    first = b.save_test_session(
+        student, group["id"], on, {s["id"]: "acquired" for s in sounds})
+    again = b.save_test_session(
+        student, group["id"], on, {s["id"]: "acquired" for s in sounds})
+
+    assert first == again, "a second save should reuse the same test"
+    assert len(b.list_test_sessions(student, limit=50)) == before + 1
+
+
+def test_re_saving_replaces_the_result_rather_than_adding_to_it():
+    """A sound she has just un-ticked has to disappear from the record."""
+    from datetime import date
+
+    b, _ = fresh()
+    student = b.conn.execute(
+        "select id from students where name like 'An%'").fetchone()["id"]
+    group = b.list_groups()[0]
+    sounds = b.list_sounds(group_id=group["id"])
+    on = date(2026, 9, 24)
+
+    b.save_test_session(student, group["id"], on,
+                        {s["id"]: "acquired" for s in sounds})
+    sess = b.save_test_session(student, group["id"], on,
+                               {sounds[0]["id"]: "not_yet"})
+
+    results = b.get_session_results(sess)
+    assert len(results) == 1, "the earlier sounds should be gone, not merged"
+    assert results[0]["status"] == "not_yet"
+
+
+def test_a_different_date_is_still_a_new_test():
+    from datetime import date
+
+    b, _ = fresh()
+    student = b.conn.execute(
+        "select id from students where name like 'An%'").fetchone()["id"]
+    group = b.list_groups()[0]
+    sound = b.list_sounds(group_id=group["id"])[0]["id"]
+
+    a = b.save_test_session(student, group["id"], date(2026, 9, 24),
+                            {sound: "acquired"})
+    c = b.save_test_session(student, group["id"], date(2026, 9, 25),
+                            {sound: "acquired"})
+    assert a != c
+
+
+def test_a_different_group_on_the_same_day_is_still_a_new_test():
+    """She does test two groups in one lesson -- that is not a double save."""
+    from datetime import date
+
+    b, _ = fresh()
+    student = b.conn.execute(
+        "select id from students where name like 'An%'").fetchone()["id"]
+    groups = b.list_groups()
+    on = date(2026, 9, 24)
+
+    a = b.save_test_session(student, groups[0]["id"], on,
+                            {b.list_sounds(group_id=groups[0]["id"])[0]["id"]: "acquired"})
+    c = b.save_test_session(student, groups[1]["id"], on,
+                            {b.list_sounds(group_id=groups[1]["id"])[0]["id"]: "acquired"})
+    assert a != c
+
+
 if __name__ == "__main__":
     passed = 0
     for name, fn in sorted(globals().items()):

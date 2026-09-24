@@ -189,37 +189,61 @@ class SupabaseBackend:
     def save_test_session(self, student_id: str, group_id: str, tested_on: date,
                           results: dict, note: str = None,
                           word_results: dict = None) -> str:
-        """One insert for the session, one batched insert for all its results.
+        """One session per child, per group, per date -- saved again, it is
+        the SAME test being corrected, not a second one.
+
+        Pressing Save twice used to leave two sessions behind, and the
+        parent page listed every one of them, so a child looked as though
+        they had been tested six times in a day. Re-saving now overwrites
+        the test already on record for that date.
 
         Deliberately not one write per tap: a live test is 6 taps, and 6
         round trips to Supabase in the middle of a lesson is exactly the
         delay this screen exists to avoid.
         """
-        session = (
+        fields = {
+            "student_id": student_id,
+            "group_id": group_id,
+            "tested_on": tested_on.isoformat(),
+            "note": (note or "").strip() or None,
+        }
+        existing = (
             self.client.table("test_sessions")
-            .insert(
-                {
-                    "student_id": student_id,
-                    "group_id": group_id,
-                    "tested_on": tested_on.isoformat(),
-                    "note": (note or "").strip() or None,
-                }
-            )
+            .select("id")
+            .eq("student_id", student_id)
+            .eq("group_id", group_id)
+            .eq("tested_on", tested_on.isoformat())
+            .limit(1)
             .execute()
-            .data[0]
+            .data
         )
+        if existing:
+            session_id = existing[0]["id"]
+            self.client.table("test_sessions").update(
+                {"note": fields["note"]}).eq("id", session_id).execute()
+            # Cleared rather than merged: a sound she has just un-ticked has
+            # to disappear from the record, not linger from the earlier save.
+            self.client.table("test_results").delete().eq(
+                "session_id", session_id).execute()
+            self.client.table("test_word_results").delete().eq(
+                "session_id", session_id).execute()
+        else:
+            session_id = (
+                self.client.table("test_sessions").insert(fields)
+                .execute().data[0]["id"]
+            )
         rows = [
-            {"session_id": session["id"], "sound_id": sid, "status": status}
+            {"session_id": session_id, "sound_id": sid, "status": status}
             for sid, status in results.items()
         ]
         if rows:
             self.client.table("test_results").insert(rows).execute()
         if word_results:
             self.client.table("test_word_results").insert([
-                {"session_id": session["id"], "word_id": wid, "correct": bool(ok)}
+                {"session_id": session_id, "word_id": wid, "correct": bool(ok)}
                 for wid, ok in word_results.items()
             ]).execute()
-        return session["id"]
+        return session_id
 
     def list_test_sessions(self, student_id: str, limit: int = 20) -> list:
         return (

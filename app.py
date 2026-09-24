@@ -449,8 +449,11 @@ def render_phonics_test(backend):
 
         note = st.text_area("Note for this test (optional)", max_chars=600,
                             key=f"note_{student['id']}_{group['id']}")
-        saved_test = st.form_submit_button("Save test", type="primary",
-                                           use_container_width=True)
+        saved_test = st.form_submit_button(
+            "Save test", type="primary", use_container_width=True,
+            help="One test per child, per group, per day. Pressing this "
+                 "again for the same day updates that test rather than "
+                 "recording a second one.")
 
     # Carried across the rerun below, so the message survives the redraw.
     if msg := st.session_state.pop("test_saved_msg", None):
@@ -469,8 +472,8 @@ def render_phonics_test(backend):
                                   statuses, note=note, word_results=word_results)
         secure = sum(1 for v in statuses.values() if v == "acquired")
         st.session_state["test_saved_msg"] = (
-            f"Saved Group {group_number} for {student['name']} — "
-            f"{secure}/{len(sounds)} secure.")
+            f"Saved Group {group_number} for {student['name']} on "
+            f"{tested_on.strftime('%-d %b')} — {secure}/{len(sounds)} secure.")
         # The badges above each sound were drawn before this save, from the
         # previous test. Rerun so they show what she just recorded, which is
         # what the caption on this screen promises.

@@ -378,13 +378,29 @@ class SqliteBackend:
 
     def save_test_session(self, student_id, group_id, tested_on, results, note=None,
                           word_results=None) -> str:
-        sess = _uid()
-        self.conn.execute(
-            "insert into test_sessions (id, student_id, group_id, tested_on, note)"
-            " values (?,?,?,?,?)",
-            (sess, student_id, group_id, tested_on.isoformat(),
-             (note or "").strip() or None),
-        )
+        # One session per child, per group, per date: pressing Save again is
+        # the same test being corrected, not a second test. Mirrors
+        # SupabaseBackend.save_test_session.
+        note = (note or "").strip() or None
+        row = self.conn.execute(
+            "select id from test_sessions where student_id=? and group_id=?"
+            " and tested_on=?",
+            (student_id, group_id, tested_on.isoformat()),
+        ).fetchone()
+        if row:
+            sess = row[0]
+            self.conn.execute("update test_sessions set note=? where id=?",
+                              (note, sess))
+            self.conn.execute("delete from test_results where session_id=?", (sess,))
+            self.conn.execute("delete from test_word_results where session_id=?",
+                              (sess,))
+        else:
+            sess = _uid()
+            self.conn.execute(
+                "insert into test_sessions (id, student_id, group_id, tested_on, note)"
+                " values (?,?,?,?,?)",
+                (sess, student_id, group_id, tested_on.isoformat(), note),
+            )
         for sid, status in results.items():
             self.conn.execute(
                 "insert into test_results (id, session_id, sound_id, status) values (?,?,?,?)",

@@ -111,7 +111,13 @@ create table if not exists test_sessions (
   -- Optional, and never required to finish a test: typing during a live
   -- test is the exact cost this app exists to remove.
   note text,
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  -- One test per child, per group, per date. Pressing Save again is the
+  -- same test being corrected, not a second test: without this, a double
+  -- tap left two sessions behind and the parent page listed both.
+  -- An existing database gets this from migration_one_test_per_day.sql,
+  -- which clears the duplicates first.
+  unique (student_id, group_id, tested_on)
 );
 
 create index if not exists test_sessions_student_idx on test_sessions(student_id, tested_on desc);
