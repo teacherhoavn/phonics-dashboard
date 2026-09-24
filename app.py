@@ -373,10 +373,9 @@ def render_phonics_test(backend):
     previous_words = backend.latest_word_results(student["id"], group["id"])
 
     st.caption(
-        "Each sound opens to its words. **Tap a word to un-tick it** if the "
-        "child could not read it — words start ticked, so a child who reads "
-        "them all needs no taps. The colour follows: all words right is green, "
-        "some is yellow, none is red."
+        "Words start **green**. Tap one to mark it **red** if the child could "
+        "not read it, so a child who reads them all needs no taps. The score "
+        "above each sound updates when you press Save test."
     )
 
     # Shortcuts have to sit OUTSIDE the form -- a form only allows its own
@@ -407,13 +406,21 @@ def render_phonics_test(backend):
             words = words_by_sound.get(snd["id"], [])
             saved = [w for w in words
                      if previous_words.get(w["id"], True)] if previous_words else words
-            label_status = rollup.status_from_words(len(saved), len(words))
-            s = theme.status_style(label_status, ACTIVE_THEME)
-            head = (f"{s['symbol']}  {snd['grapheme']}  —  {snd['example_word'] or ''}"
-                    f"   ({len(saved)}/{len(words)})")
-            with st.expander(head):
-                if snd.get("action_hint"):
-                    st.caption(snd["action_hint"])
+            # The score shown is the one on record: inside a form the pills
+            # do not reach the server until Save, so this is last test's
+            # result until she saves this one.
+            status = rollup.status_from_words(len(saved), len(words))
+            s = theme.status_style(status, ACTIVE_THEME)
+            pct = round(100 * len(saved) / len(words)) if words else 0
+            st.markdown(
+                f"<div class='sound-head'><span class='sound-grapheme'>"
+                f"{snd['grapheme']}</span>"
+                f"<span class='badge' style='background:{s['bg']};color:{s['fg']};"
+                f"border:1.5px solid {s.get('edge', s['bg'])}'>"
+                f"{s['symbol']} {pct}% · {len(saved)}/{len(words)}</span></div>",
+                unsafe_allow_html=True,
+            )
+            with st.expander(f"{snd['label']} — {snd['example_word'] or ''}"):
                 picked[snd["id"]] = st.pills(
                     snd["label"], [w["word"] for w in words],
                     selection_mode="multi",

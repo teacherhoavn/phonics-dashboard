@@ -352,8 +352,24 @@ BASE_CSS = """
   }
   [data-testid="stNumberInput"] label p { font-size: 1rem; font-weight: 600; }
 
-  /* Word pills: big enough to tap, and obviously on or off. */
+  /* Word pills. Green means the child read it; tapping turns it red. That
+     is the inverse of a normal multi-select, and deliberate: it makes the
+     common case -- a child who reads everything -- cost no taps at all. */
   [data-testid="stButtonGroup"] button { min-height: 44px; }
+  [class*="st-key-w_"] [data-testid="stBaseButton-pillsActive"] {
+    background: var(--got-bg) !important; color: var(--got-fg) !important;
+    border: 2px solid var(--got-edge) !important; font-weight: 700;
+  }
+  [class*="st-key-w_"] [data-testid="stBaseButton-pills"] {
+    background: var(--not-bg) !important; color: var(--not-fg) !important;
+    border: 2px solid var(--not-edge) !important; font-weight: 700;
+    text-decoration: line-through;
+  }
+
+  /* Sound heading: the letter, and the score on record beside it. */
+  .sound-head {
+    display: flex; align-items: center; gap: .6rem; margin: .5rem 0 -.2rem;
+  }
 
   .badge {
     display: inline-block; padding: .2rem .6rem; border-radius: 999px;
